@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from core.agent import AgentCore
+from core.conversation_memory import ConversationMemory
 from core.memory import MemoryManager
 from core.messenger import Messenger
 from core.paths import load_prompt
@@ -62,15 +63,22 @@ class DigitalPerson:
             self._status = "thinking"
             self._current_task = f"Responding to {from_person}"
 
-            prompt = load_prompt(
-                "chat_message", from_person=from_person, content=content
-            )
+            # Build history-aware prompt via conversation memory
+            conv_memory = ConversationMemory(self.person_dir, self.model_config)
+            await conv_memory.compress_if_needed()
+            prompt = conv_memory.build_chat_prompt(content, from_person)
 
             try:
                 result = await self.agent.run_cycle(
                     prompt, trigger=f"message:{from_person}"
                 )
                 self._last_activity = datetime.now()
+
+                # Record the exchange in conversation memory
+                conv_memory.append_turn("human", content)
+                conv_memory.append_turn("assistant", result.summary)
+                conv_memory.save()
+
                 logger.info(
                     "[%s] process_message END duration_ms=%d",
                     self.name, result.duration_ms,
@@ -98,9 +106,10 @@ class DigitalPerson:
             self._status = "thinking"
             self._current_task = f"Responding to {from_person}"
 
-            prompt = load_prompt(
-                "chat_message", from_person=from_person, content=content
-            )
+            # Build history-aware prompt via conversation memory
+            conv_memory = ConversationMemory(self.person_dir, self.model_config)
+            await conv_memory.compress_if_needed()
+            prompt = conv_memory.build_chat_prompt(content, from_person)
 
             try:
                 async for chunk in self.agent.run_cycle_streaming(
@@ -108,6 +117,12 @@ class DigitalPerson:
                 ):
                     if chunk.get("type") == "cycle_done":
                         self._last_activity = datetime.now()
+                        # Record the exchange in conversation memory
+                        cycle_result = chunk.get("cycle_result", {})
+                        summary = cycle_result.get("summary", "")
+                        conv_memory.append_turn("human", content)
+                        conv_memory.append_turn("assistant", summary)
+                        conv_memory.save()
                         logger.info(
                             "[%s] process_message_stream END",
                             self.name,

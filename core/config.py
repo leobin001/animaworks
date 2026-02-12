@@ -61,6 +61,7 @@ class PersonModelConfig(BaseModel):
     credential: str | None = None
     context_threshold: float | None = None
     max_chains: int | None = None
+    conversation_history_threshold: float | None = None
 
 
 class PersonDefaults(BaseModel):
@@ -73,6 +74,7 @@ class PersonDefaults(BaseModel):
     credential: str = "anthropic"
     context_threshold: float = 0.50
     max_chains: int = 2
+    conversation_history_threshold: float = 0.30
 
 
 class AnimaWorksConfig(BaseModel):

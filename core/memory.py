@@ -88,6 +88,7 @@ class MemoryManager:
                 api_base_url=credential.base_url,
                 context_threshold=resolved.context_threshold,
                 max_chains=resolved.max_chains,
+                conversation_history_threshold=resolved.conversation_history_threshold,
             )
 
         # Legacy fallback: parse config.md

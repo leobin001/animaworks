@@ -200,6 +200,73 @@ def create_router() -> APIRouter:
             return {"error": "Procedure not found"}
         return {"name": proc, "content": path.read_text(encoding="utf-8")}
 
+    @api.get("/persons/{name}/conversation")
+    async def get_conversation(name: str, request: Request):
+        """View current conversation state."""
+        person = request.app.state.persons.get(name)
+        if not person:
+            return {"error": "Person not found"}
+        from core.conversation_memory import ConversationMemory
+
+        conv = ConversationMemory(person.person_dir, person.model_config)
+        state = conv.load()
+        return {
+            "person": name,
+            "total_turn_count": state.total_turn_count,
+            "raw_turns": len(state.turns),
+            "compressed_turn_count": state.compressed_turn_count,
+            "has_summary": bool(state.compressed_summary),
+            "summary_preview": (
+                state.compressed_summary[:300]
+                if state.compressed_summary
+                else ""
+            ),
+            "total_token_estimate": state.total_token_estimate,
+            "turns": [
+                {
+                    "role": t.role,
+                    "content": (
+                        t.content[:200] + "..."
+                        if len(t.content) > 200
+                        else t.content
+                    ),
+                    "timestamp": t.timestamp,
+                    "token_estimate": t.token_estimate,
+                }
+                for t in state.turns
+            ],
+        }
+
+    @api.delete("/persons/{name}/conversation")
+    async def clear_conversation(name: str, request: Request):
+        """Clear conversation history for a fresh start."""
+        person = request.app.state.persons.get(name)
+        if not person:
+            return {"error": "Person not found"}
+        from core.conversation_memory import ConversationMemory
+
+        conv = ConversationMemory(person.person_dir, person.model_config)
+        conv.clear()
+        return {"status": "cleared", "person": name}
+
+    @api.post("/persons/{name}/conversation/compress")
+    async def compress_conversation(name: str, request: Request):
+        """Manually trigger conversation compression."""
+        person = request.app.state.persons.get(name)
+        if not person:
+            return {"error": "Person not found"}
+        from core.conversation_memory import ConversationMemory
+
+        conv = ConversationMemory(person.person_dir, person.model_config)
+        compressed = await conv.compress_if_needed()
+        state = conv.load()
+        return {
+            "compressed": compressed,
+            "person": name,
+            "total_turn_count": state.total_turn_count,
+            "total_token_estimate": state.total_token_estimate,
+        }
+
     @api.post("/persons/{name}/trigger")
     async def trigger_heartbeat(name: str, request: Request):
         person = request.app.state.persons.get(name)
