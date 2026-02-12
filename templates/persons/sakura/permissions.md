@@ -16,3 +16,14 @@ Read, Write, Edit, Bash, Grep, Glob
 
 ## 実行できないコマンド
 rm -rf, システム設定の変更
+
+## 外部ツール
+- web_search: OK
+- x_search: OK
+- chatwork: OK (send, messages, search, unreplied)
+- slack: OK (send, messages, search, unreplied)
+- gmail: NO
+- local_llm: OK (generate, chat)
+- transcribe: NO
+- aws_collector: NO
+- github: OK (issues, prs)

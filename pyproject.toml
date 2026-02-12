@@ -16,9 +16,17 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+[project.optional-dependencies]
+communication = ["requests>=2.31", "slack-sdk>=3.27"]
+gmail = ["google-api-python-client>=2.0", "google-auth-oauthlib>=1.0", "google-auth-httplib2>=0.2"]
+transcribe = ["faster-whisper>=1.0"]
+aws = ["boto3>=1.34"]
+all-tools = ["animaworks[communication,gmail,transcribe,aws]"]
+
 [tool.setuptools]
 py-modules = ["main"]
-packages = ["core", "server", "broker", "gateway", "worker"]
+packages = ["core", "core.tools", "server", "broker", "gateway", "worker"]
 
 [project.scripts]
 animaworks = "main:cli_main"
+animaworks-tool = "core.tools:cli_dispatch"

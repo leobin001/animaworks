@@ -100,6 +100,14 @@ def build_system_prompt(memory: MemoryManager) -> str:
             skill_lines=skill_lines,
         ))
 
+    # Inject external tools guide if permissions mention external tools
+    if permissions and "外部ツール" in permissions:
+        try:
+            tools_guide = load_prompt("tools_guide")
+            parts.append(tools_guide)
+        except Exception:
+            logger.debug("tools_guide.md not found, skipping external tools injection")
+
     parts.append(load_prompt("behavior_rules"))
 
     # Messaging instructions

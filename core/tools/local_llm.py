@@ -1,0 +1,586 @@
+"""AnimaWorks local LLM tool -- Ollama API client.
+
+Rewritten from ~/dev/localmodel/localmodel (Bash).
+Provides intelligent server selection, retry with failover,
+and a clean Python API for interacting with Ollama servers.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import re
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from typing import Any
+
+import httpx
+
+from core.tools._base import logger
+
+# ---------------------------------------------------------------------------
+# Server configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class OllamaServer:
+    name: str
+    url: str
+
+
+DEFAULT_SERVERS = {
+    "localserver-a": OllamaServer("localserver-a", "http://192.168.1.10:11435"),
+    "localserver-b": OllamaServer("localserver-b", "http://192.168.1.100:11434"),
+    "localserver-c": OllamaServer("localserver-c", "http://192.168.1.50:11434"),
+}
+
+
+# ---------------------------------------------------------------------------
+# Client
+# ---------------------------------------------------------------------------
+
+
+class OllamaClient:
+    """Client for interacting with Ollama API servers."""
+
+    def __init__(
+        self,
+        server: str = "auto",
+        model: str | None = None,
+        hint: str | None = None,
+        timeout: float = 600.0,
+    ):
+        # Parse OLLAMA_SERVERS env var if set (format: "name=url,name=url")
+        self.servers = self._load_servers()
+        self._server_name = server
+        self._model = model
+        self._hint = hint
+        self._timeout = timeout
+        self._client = httpx.Client(timeout=httpx.Timeout(timeout, connect=10.0))
+
+    def _load_servers(self) -> dict[str, OllamaServer]:
+        env = os.environ.get("OLLAMA_SERVERS")
+        if not env:
+            return dict(DEFAULT_SERVERS)
+        servers: dict[str, OllamaServer] = {}
+        for entry in env.split(","):
+            if "=" in entry:
+                name, url = entry.split("=", 1)
+                servers[name.strip()] = OllamaServer(name.strip(), url.strip())
+        return servers if servers else dict(DEFAULT_SERVERS)
+
+    def _get_server(self) -> OllamaServer:
+        if self._server_name != "auto":
+            if self._server_name in self.servers:
+                return self.servers[self._server_name]
+            raise ValueError(f"Unknown server: {self._server_name}")
+        return self.select_server()
+
+    def select_server(self) -> OllamaServer:
+        """Select the least-loaded server by querying /api/ps on localserver-a and localserver-b."""
+        candidates = [s for name, s in self.servers.items() if name in ("localserver-a", "localserver-b")]
+        if not candidates:
+            candidates = list(self.servers.values())[:2]
+        if len(candidates) == 1:
+            return candidates[0]
+
+        results: dict[str, tuple[int, float]] = {}
+
+        def check(server: OllamaServer) -> tuple[OllamaServer, int, float]:
+            try:
+                r = httpx.get(f"{server.url}/api/ps", timeout=5.0)
+                data = r.json()
+                model_count = len(data.get("models", []))
+                return server, model_count, r.elapsed.total_seconds()
+            except Exception:
+                return server, 999, 999.0
+
+        with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
+            futures = [pool.submit(check, s) for s in candidates]
+            for f in as_completed(futures):
+                server, count, latency = f.result()
+                results[server.name] = (count, latency)
+
+        # Pick server with fewest loaded models, then lowest latency
+        best = min(results.items(), key=lambda x: (x[1][0], x[1][1]))
+        selected = self.servers[best[0]]
+        logger.debug(
+            "Selected server: %s (models=%d, latency=%.2fs)",
+            selected.name,
+            best[1][0],
+            best[1][1],
+        )
+        return selected
+
+    def resolve_model(self, hint: str | None = None) -> str:
+        """Find a model on the server, optionally filtered by hint pattern."""
+        if self._model:
+            return self._model
+        hint = hint or self._hint
+        server = self._get_server()
+        r = self._client.get(f"{server.url}/api/tags")
+        r.raise_for_status()
+        models = r.json().get("models", [])
+        if not models:
+            raise RuntimeError(f"No models available on {server.name}")
+        if hint:
+            pattern = re.compile(hint, re.IGNORECASE)
+            matched = [m for m in models if pattern.search(m.get("name", ""))]
+            if matched:
+                return matched[0]["name"]
+        return models[0]["name"]
+
+    def generate(
+        self,
+        prompt: str,
+        system: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        think: str = "off",
+    ) -> str:
+        """Generate text using /api/generate."""
+        server = self._get_server()
+        model = self.resolve_model()
+        body: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+        if system:
+            body["system"] = system
+        self._apply_think(body, think)
+        return self._send_with_retry(server, "/api/generate", body, key="response")
+
+    def chat(
+        self,
+        messages: list[dict],
+        system: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        think: str = "off",
+    ) -> str:
+        """Chat using /api/chat."""
+        server = self._get_server()
+        model = self.resolve_model()
+        if system:
+            messages = [{"role": "system", "content": system}] + messages
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+        self._apply_think(body, think)
+        return self._send_with_retry(server, "/api/chat", body, key="message.content")
+
+    def list_models(self) -> list[dict]:
+        """List available models on the selected server."""
+        server = self._get_server()
+        r = self._client.get(f"{server.url}/api/tags")
+        r.raise_for_status()
+        return r.json().get("models", [])
+
+    def server_status(self) -> dict[str, Any]:
+        """Get status (loaded models) from all servers."""
+        status: dict[str, Any] = {}
+        for name, server in self.servers.items():
+            try:
+                r = httpx.get(f"{server.url}/api/ps", timeout=5.0)
+                status[name] = r.json()
+            except Exception as e:
+                status[name] = {"error": str(e)}
+        return status
+
+    def model_info(self, model: str | None = None) -> dict:
+        """Get model details via /api/show."""
+        server = self._get_server()
+        model = model or self.resolve_model()
+        r = self._client.post(f"{server.url}/api/show", json={"model": model})
+        r.raise_for_status()
+        return r.json()
+
+    def _apply_think(self, body: dict, think: str) -> None:
+        """Apply thinking configuration based on model type."""
+        if think == "off":
+            body["options"]["think"] = False
+            return
+        # Map think levels
+        model = body.get("model", "")
+        if "gpt-oss" in model.lower():
+            body["options"]["think"] = think  # string for GPT-OSS
+        else:
+            body["options"]["think"] = True  # boolean for others
+
+    def _send_with_retry(
+        self,
+        server: OllamaServer,
+        path: str,
+        body: dict,
+        key: str,
+        max_retries: int = 60,
+        poll_interval: float = 5.0,
+    ) -> str:
+        """Send request with retry on server busy, failover to alternate server."""
+        alternate = self._get_alternate(server)
+        current = server
+        for attempt in range(max_retries):
+            try:
+                r = self._client.post(
+                    f"{current.url}{path}",
+                    json=body,
+                    timeout=httpx.Timeout(self._timeout, connect=10.0),
+                )
+                data = r.json()
+                if "error" in data and (
+                    "is running" in data["error"]
+                    or "busy" in str(data.get("error", "")).lower()
+                ):
+                    logger.debug(
+                        "Server %s busy, retrying in %.0fs (attempt %d)",
+                        current.name,
+                        poll_interval,
+                        attempt + 1,
+                    )
+                    time.sleep(poll_interval)
+                    # Try alternate server on next attempt
+                    if alternate and attempt % 2 == 0:
+                        current = alternate
+                    continue
+                r.raise_for_status()
+                # Extract nested key like "message.content"
+                result: Any = data
+                for k in key.split("."):
+                    result = result[k]
+                return result
+            except httpx.ConnectError:
+                if alternate:
+                    logger.warning(
+                        "Server %s unreachable, failing over to %s",
+                        current.name,
+                        alternate.name,
+                    )
+                    current = alternate
+                    alternate = None
+                    continue
+                raise
+        raise RuntimeError(f"Server busy after {max_retries} retries")
+
+    def _get_alternate(self, server: OllamaServer) -> OllamaServer | None:
+        """Get alternate server for failover."""
+        alternates = {"localserver-a": "localserver-b", "localserver-b": "localserver-a"}
+        alt_name = alternates.get(server.name)
+        return self.servers.get(alt_name) if alt_name else None
+
+
+# ---------------------------------------------------------------------------
+# Tool schemas for agent integration
+# ---------------------------------------------------------------------------
+
+
+def get_tool_schemas() -> list[dict]:
+    """Return JSON schemas for local LLM tools."""
+    return [
+        {
+            "name": "local_llm_generate",
+            "description": (
+                "Generate text using a local Ollama LLM server. "
+                "Uses /api/generate for single-turn completion."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "The text prompt to send to the model.",
+                    },
+                    "system": {
+                        "type": "string",
+                        "description": "System prompt (optional).",
+                        "default": "",
+                    },
+                    "server": {
+                        "type": "string",
+                        "description": "Server name (localserver-a|localserver-b|localserver-c|auto). Default: auto.",
+                        "default": "auto",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model name. If omitted, auto-selected from server.",
+                    },
+                    "hint": {
+                        "type": "string",
+                        "description": "Pattern to match model name (regex, case-insensitive).",
+                    },
+                    "temperature": {
+                        "type": "number",
+                        "description": "Generation temperature (0.0-2.0).",
+                        "default": 0.7,
+                    },
+                    "max_tokens": {
+                        "type": "integer",
+                        "description": "Maximum tokens to generate.",
+                        "default": 4096,
+                    },
+                    "think": {
+                        "type": "string",
+                        "description": "Thinking effort (off|low|medium|high).",
+                        "default": "off",
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+        {
+            "name": "local_llm_chat",
+            "description": (
+                "Chat with a local Ollama LLM server. "
+                "Uses /api/chat for multi-turn conversation."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "messages": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "role": {
+                                    "type": "string",
+                                    "enum": ["user", "assistant", "system"],
+                                },
+                                "content": {"type": "string"},
+                            },
+                            "required": ["role", "content"],
+                        },
+                        "description": "Chat message history.",
+                    },
+                    "system": {
+                        "type": "string",
+                        "description": "System prompt (optional).",
+                        "default": "",
+                    },
+                    "server": {
+                        "type": "string",
+                        "description": "Server name (localserver-a|localserver-b|localserver-c|auto). Default: auto.",
+                        "default": "auto",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model name. If omitted, auto-selected from server.",
+                    },
+                    "hint": {
+                        "type": "string",
+                        "description": "Pattern to match model name (regex, case-insensitive).",
+                    },
+                    "temperature": {
+                        "type": "number",
+                        "description": "Generation temperature (0.0-2.0).",
+                        "default": 0.7,
+                    },
+                    "max_tokens": {
+                        "type": "integer",
+                        "description": "Maximum tokens to generate.",
+                        "default": 4096,
+                    },
+                    "think": {
+                        "type": "string",
+                        "description": "Thinking effort (off|low|medium|high).",
+                        "default": "off",
+                    },
+                },
+                "required": ["messages"],
+            },
+        },
+        {
+            "name": "local_llm_models",
+            "description": "List available models on the selected Ollama server.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "server": {
+                        "type": "string",
+                        "description": "Server name (localserver-a|localserver-b|localserver-c|auto). Default: auto.",
+                        "default": "auto",
+                    },
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "local_llm_status",
+            "description": "Get status (loaded models, latency) from all Ollama servers.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    ]
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+
+def cli_main(argv: list[str] | None = None) -> None:
+    """Standalone CLI for local LLM operations."""
+    parser = argparse.ArgumentParser(
+        prog="animaworks-llm",
+        description="AnimaWorks local LLM tool -- Ollama API client.",
+    )
+    parser.add_argument(
+        "-s", "--server", default="auto",
+        help="Server name (localserver-a|localserver-b|localserver-c|auto). Default: auto.",
+    )
+    parser.add_argument(
+        "-m", "--model", default=None,
+        help="Model name. If omitted, auto-selected from server.",
+    )
+    parser.add_argument(
+        "--hint", default=None,
+        help="Pattern to match model name (regex, case-insensitive).",
+    )
+    parser.add_argument(
+        "--timeout", type=float, default=600.0,
+        help="Request timeout in seconds (default: 600).",
+    )
+
+    sub = parser.add_subparsers(dest="command")
+
+    # generate
+    p_gen = sub.add_parser("generate", help="Generate text (single-turn)")
+    p_gen.add_argument("prompt", nargs="?", help="Prompt text (reads stdin if omitted)")
+    p_gen.add_argument("-S", "--system", default="", help="System prompt")
+    p_gen.add_argument("--temperature", type=float, default=0.7, help="Temperature")
+    p_gen.add_argument("--max-tokens", type=int, default=4096, help="Max tokens")
+    p_gen.add_argument(
+        "--think", default="off", choices=["off", "low", "medium", "high"],
+        help="Thinking effort",
+    )
+
+    # chat
+    p_chat = sub.add_parser("chat", help="Chat (multi-turn, JSON input)")
+    p_chat.add_argument(
+        "json_input", nargs="?",
+        help='JSON messages array or file path (reads stdin if omitted)',
+    )
+    p_chat.add_argument("-S", "--system", default="", help="System prompt")
+    p_chat.add_argument("--temperature", type=float, default=0.7, help="Temperature")
+    p_chat.add_argument("--max-tokens", type=int, default=4096, help="Max tokens")
+    p_chat.add_argument(
+        "--think", default="off", choices=["off", "low", "medium", "high"],
+        help="Thinking effort",
+    )
+
+    # list
+    sub.add_parser("list", help="List available models")
+
+    # status
+    sub.add_parser("status", help="Show server status")
+
+    args = parser.parse_args(argv)
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    client = OllamaClient(
+        server=args.server,
+        model=args.model,
+        hint=args.hint,
+        timeout=args.timeout,
+    )
+
+    if args.command == "generate":
+        prompt = args.prompt
+        if prompt is None:
+            if sys.stdin.isatty():
+                print("Enter prompt (Ctrl-D to finish):", file=sys.stderr)
+            prompt = sys.stdin.read().strip()
+        if not prompt:
+            print("Error: no prompt provided", file=sys.stderr)
+            sys.exit(1)
+        result = client.generate(
+            prompt=prompt,
+            system=args.system,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            think=args.think,
+        )
+        print(result)
+
+    elif args.command == "chat":
+        raw = args.json_input
+        if raw is None:
+            if sys.stdin.isatty():
+                print("Enter JSON messages (Ctrl-D to finish):", file=sys.stderr)
+            raw = sys.stdin.read().strip()
+        # Try as file path
+        from pathlib import Path
+
+        if raw and Path(raw).is_file():
+            raw = Path(raw).read_text(encoding="utf-8")
+        try:
+            messages = json.loads(raw)
+        except json.JSONDecodeError:
+            print("Error: invalid JSON input", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(messages, list):
+            # Support {"messages": [...]} wrapper
+            if isinstance(messages, dict) and "messages" in messages:
+                messages = messages["messages"]
+            else:
+                print("Error: expected a JSON array of messages", file=sys.stderr)
+                sys.exit(1)
+        result = client.chat(
+            messages=messages,
+            system=args.system,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            think=args.think,
+        )
+        print(result)
+
+    elif args.command == "list":
+        models = client.list_models()
+        if not models:
+            print("No models available.")
+            return
+        for m in models:
+            name = m.get("name", "?")
+            details = m.get("details", {})
+            param_size = details.get("parameter_size", "?")
+            quant = details.get("quantization_level", "?")
+            print(f"  {name}\t({param_size}, {quant})")
+
+    elif args.command == "status":
+        status = client.server_status()
+        for name, info in status.items():
+            print(f"=== {name} ===")
+            if "error" in info:
+                print(f"  Status: unreachable ({info['error']})")
+            else:
+                models = info.get("models", [])
+                print(f"  Status: OK")
+                print(f"  Loaded models: {len(models)}")
+                for m in models:
+                    vram_gb = m.get("size_vram", 0) / (1024**3)
+                    print(f"  - {m.get('name', '?')} (VRAM: {vram_gb:.0f}GB)")
+            print()
+
+
+if __name__ == "__main__":
+    cli_main()
