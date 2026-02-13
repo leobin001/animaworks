@@ -71,6 +71,9 @@ def cmd_init(args: argparse.Namespace) -> None:
         # Restart server if it was running before reset
         if was_running:
             print("\nRestarting server...")
+            removed = _clear_pycache()
+            if removed:
+                print(f"Cleared {removed} __pycache__ directories.")
             start_args = argparse.Namespace(host="0.0.0.0", port=18500)
             cmd_start(start_args)
         return
@@ -483,11 +486,32 @@ def cmd_stop(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _clear_pycache() -> int:
+    """Remove all __pycache__ directories under the project root.
+
+    Returns the number of directories removed.
+    """
+    import shutil
+
+    project_root = Path(__file__).resolve().parent
+    count = 0
+    for cache_dir in project_root.rglob("__pycache__"):
+        try:
+            shutil.rmtree(cache_dir)
+            count += 1
+        except OSError as exc:
+            logger.warning("Failed to remove %s: %s", cache_dir, exc)
+    return count
+
+
 def cmd_restart(args: argparse.Namespace) -> None:
     """Restart the AnimaWorks server (stop then start)."""
     if not _stop_server():
         print("Error: Cannot restart — failed to stop the running server.")
         sys.exit(1)
+    removed = _clear_pycache()
+    if removed:
+        print(f"Cleared {removed} __pycache__ directories.")
     time.sleep(0.5)
     cmd_start(args)
 
