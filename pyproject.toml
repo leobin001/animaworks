@@ -23,6 +23,7 @@ transcribe = ["faster-whisper>=1.0"]
 aws = ["boto3>=1.34"]
 all-tools = ["animaworks[communication,gmail,transcribe,aws]"]
 redis = ["redis>=5.0.0"]
+test = ["pytest>=8.0", "pytest-asyncio>=0.24", "pytest-timeout>=2.2"]
 
 [tool.setuptools]
 py-modules = ["main"]
@@ -31,3 +32,11 @@ packages = ["core", "core.tools", "server"]
 [project.scripts]
 animaworks = "main:cli_main"
 animaworks-tool = "core.tools:cli_dispatch"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "live: tests making real API calls (skip with --mock or no API key)",
+]
+timeout = 120
