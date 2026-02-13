@@ -231,7 +231,7 @@ def create_router() -> APIRouter:
         person = request.app.state.persons.get(name)
         if not person:
             return {"error": "Person not found"}
-        from core.conversation_memory import ConversationMemory
+        from core.memory.conversation import ConversationMemory
 
         conv = ConversationMemory(person.person_dir, person.model_config)
         state = conv.load()
@@ -270,7 +270,7 @@ def create_router() -> APIRouter:
         person = request.app.state.persons.get(name)
         if not person:
             return {"error": "Person not found"}
-        from core.conversation_memory import ConversationMemory
+        from core.memory.conversation import ConversationMemory
 
         conv = ConversationMemory(person.person_dir, person.model_config)
         state = conv.load()
@@ -305,8 +305,8 @@ def create_router() -> APIRouter:
         person = request.app.state.persons.get(name)
         if not person:
             return {"error": "Person not found"}
-        from core.conversation_memory import ConversationMemory
-        from core.shortterm_memory import ShortTermMemory
+        from core.memory.conversation import ConversationMemory
+        from core.memory.shortterm import ShortTermMemory
 
         # Active conversation
         conv = ConversationMemory(person.person_dir, person.model_config)
@@ -387,7 +387,7 @@ def create_router() -> APIRouter:
         person = request.app.state.persons.get(name)
         if not person:
             return {"error": "Person not found"}
-        from core.shortterm_memory import ShortTermMemory
+        from core.memory.shortterm import ShortTermMemory
 
         stm = ShortTermMemory(person.person_dir)
         archive_dir = stm._archive_dir
@@ -419,7 +419,7 @@ def create_router() -> APIRouter:
         person = request.app.state.persons.get(name)
         if not person:
             return {"error": "Person not found"}
-        from core.conversation_memory import ConversationMemory
+        from core.memory.conversation import ConversationMemory
 
         conv = ConversationMemory(person.person_dir, person.model_config)
         messages = conv.load_transcript(date)
@@ -438,7 +438,7 @@ def create_router() -> APIRouter:
         person = request.app.state.persons.get(name)
         if not person:
             return {"error": "Person not found"}
-        from core.conversation_memory import ConversationMemory
+        from core.memory.conversation import ConversationMemory
 
         conv = ConversationMemory(person.person_dir, person.model_config)
         conv.clear()
@@ -450,7 +450,7 @@ def create_router() -> APIRouter:
         person = request.app.state.persons.get(name)
         if not person:
             return {"error": "Person not found"}
-        from core.conversation_memory import ConversationMemory
+        from core.memory.conversation import ConversationMemory
 
         conv = ConversationMemory(person.person_dir, person.model_config)
         compressed = await conv.compress_if_needed()
@@ -553,8 +553,8 @@ def create_router() -> APIRouter:
         from datetime import date as date_type
         from datetime import datetime, timedelta, timezone
 
-        from core.conversation_memory import ConversationMemory
-        from core.shortterm_memory import ShortTermMemory
+        from core.memory.conversation import ConversationMemory
+        from core.memory.shortterm import ShortTermMemory
 
         persons = request.app.state.persons
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)

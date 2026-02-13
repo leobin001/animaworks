@@ -847,7 +847,7 @@ def cli_main() -> None:
     p_status.set_defaults(func=cmd_status)
 
     # Config management
-    from core.config_cli import (
+    from core.config.cli import (
         cmd_config_dispatch,
         cmd_config_get,
         cmd_config_list,
