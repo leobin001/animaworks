@@ -64,6 +64,7 @@ class ToolHandler:
         self._messenger = messenger
         self._delegate_fn = delegate_fn
         self._on_message_sent = on_message_sent
+        self._replied_to: set[str] = set()
         self._external = ExternalToolDispatcher(
             tool_registry or [],
             personal_tools=personal_tools,
@@ -86,6 +87,15 @@ class ToolHandler:
     @on_message_sent.setter
     def on_message_sent(self, fn: OnMessageSentFn | None) -> None:
         self._on_message_sent = fn
+
+    @property
+    def replied_to(self) -> set[str]:
+        """Person names this person has sent messages to in the current cycle."""
+        return self._replied_to
+
+    def reset_replied_to(self) -> None:
+        """Clear reply tracking (call at start of each heartbeat cycle)."""
+        self._replied_to.clear()
 
     # ── Main dispatch ────────────────────────────────────────
 
@@ -208,6 +218,7 @@ class ToolHandler:
             reply_to=args.get("reply_to", ""),
         )
         logger.info("send_message to=%s thread=%s", args["to"], msg.thread_id)
+        self._replied_to.add(args["to"])
 
         if self._on_message_sent:
             try:

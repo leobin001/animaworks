@@ -91,6 +91,15 @@ class AgentCore:
         """Inject a callback invoked after a send_message tool call."""
         self._tool_handler.on_message_sent = fn
 
+    def reset_reply_tracking(self) -> None:
+        """Clear reply tracking (call at start of each heartbeat cycle)."""
+        self._tool_handler.reset_replied_to()
+
+    @property
+    def replied_to(self) -> set[str]:
+        """Person names this agent has sent messages to in the current cycle."""
+        return self._tool_handler.replied_to
+
     # ── Model / mode helpers ───────────────────────────────
 
     def _is_claude_model(self) -> bool:

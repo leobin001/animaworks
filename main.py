@@ -45,6 +45,15 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     # --reset: complete deletion + re-initialization (interactive)
     if getattr(args, "reset", False):
+        # Stop running server before reset (PID file will be deleted with data dir)
+        pid = _read_pid()
+        was_running = pid is not None and _is_process_alive(pid)
+        if was_running:
+            print("Stopping running server before reset...")
+            if not _stop_server():
+                print("Error: Cannot reset — failed to stop the running server.")
+                return
+
         if data_dir.exists():
             answer = input(
                 f"WARNING: This will DELETE all data in {data_dir}\n"
@@ -58,6 +67,12 @@ def cmd_init(args: argparse.Namespace) -> None:
         print(f"Runtime directory reset: {data_dir}")
         _interactive_person_setup(data_dir)
         _interactive_user_setup(data_dir)
+
+        # Restart server if it was running before reset
+        if was_running:
+            print("\nRestarting server...")
+            start_args = argparse.Namespace(host="0.0.0.0", port=18500)
+            cmd_start(start_args)
         return
 
     # --force: safe merge (add missing files only)

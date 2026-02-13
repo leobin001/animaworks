@@ -100,6 +100,25 @@ class Messenger:
             count += 1
         return count
 
+    def archive_from(self, sender: str) -> int:
+        """Move messages from a specific sender to processed/.
+
+        Only archives messages where ``from_person`` matches *sender*.
+        Returns the number of archived messages.
+        """
+        processed_dir = self.inbox_dir / "processed"
+        processed_dir.mkdir(exist_ok=True)
+        count = 0
+        for f in self.inbox_dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                if data.get("from_person") == sender:
+                    f.rename(processed_dir / f.name)
+                    count += 1
+            except Exception as e:
+                logger.error("Failed to check message %s: %s", f, e)
+        return count
+
     def has_unread(self) -> bool:
         return any(self.inbox_dir.glob("*.json"))
 
