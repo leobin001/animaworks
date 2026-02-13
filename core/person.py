@@ -150,16 +150,18 @@ class DigitalPerson:
             checklist = hb_config or load_prompt("heartbeat_default_checklist")
             parts = [load_prompt("heartbeat", checklist=checklist)]
 
+            # Read unread messages but do NOT archive yet.
+            # Messages stay in inbox until the agent successfully processes them.
             unread_count = 0
             if self.messenger.has_unread():
-                messages = self.messenger.receive_and_archive()
+                messages = self.messenger.receive()
                 unread_count = len(messages)
                 logger.info(
                     "[%s] Processing %d unread messages in heartbeat",
                     self.name, unread_count,
                 )
                 summary = "\n".join(
-                    f"- {m.from_person}: {m.content[:100]}" for m in messages
+                    f"- {m.from_person}: {m.content[:800]}" for m in messages
                 )
                 parts.append(load_prompt("unread_messages", summary=summary))
 
@@ -168,6 +170,15 @@ class DigitalPerson:
                     "\n\n".join(parts), trigger="heartbeat"
                 )
                 self._last_activity = datetime.now()
+
+                # Archive messages only after the agent has successfully processed them.
+                if unread_count > 0:
+                    archived = self.messenger.archive_all()
+                    logger.info(
+                        "[%s] Archived %d messages after successful heartbeat",
+                        self.name, archived,
+                    )
+
                 logger.info(
                     "[%s] run_heartbeat END duration_ms=%d unread_processed=%d",
                     self.name, result.duration_ms, unread_count,

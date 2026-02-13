@@ -75,10 +75,14 @@ animaworks init
 ## 実行方法
 
 ```bash
-animaworks start
+animaworks start                # サーバー起動
+animaworks stop                 # サーバー停止
+animaworks restart              # サーバー再起動
+animaworks start --port 8080    # ポート指定
 ```
 
 デフォルトで `http://localhost:18500` でサーバーが起動する。
+PIDファイル (`~/.animaworks/server.pid`) で多重起動を防止し、graceful shutdown を行う。
 
 ### Docker
 
@@ -92,6 +96,8 @@ docker-compose up
 |---|---|
 | `animaworks init [--force]` | ランタイムディレクトリを初期化 |
 | `animaworks start` | サーバー起動 |
+| `animaworks stop` | サーバー停止（SIGTERM → graceful shutdown） |
+| `animaworks restart` | サーバー再起動（stop → start） |
 | `animaworks serve` | サーバー起動（start のエイリアス） |
 | `animaworks chat PERSON "メッセージ"` | Digital Person にメッセージを送信 |
 | `animaworks heartbeat PERSON` | ハートビートを手動トリガー |

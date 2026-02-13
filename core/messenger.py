@@ -80,11 +80,18 @@ class Messenger:
     def receive_and_archive(self) -> list[Message]:
         messages = self.receive()
         if messages:
-            processed_dir = self.inbox_dir / "processed"
-            processed_dir.mkdir(exist_ok=True)
-            for f in self.inbox_dir.glob("*.json"):
-                f.rename(processed_dir / f.name)
+            self.archive_all()
         return messages
+
+    def archive_all(self) -> int:
+        """Move all unread messages in inbox to processed/."""
+        processed_dir = self.inbox_dir / "processed"
+        processed_dir.mkdir(exist_ok=True)
+        count = 0
+        for f in self.inbox_dir.glob("*.json"):
+            f.rename(processed_dir / f.name)
+            count += 1
+        return count
 
     def has_unread(self) -> bool:
         return any(self.inbox_dir.glob("*.json"))
