@@ -16,13 +16,11 @@ def _make_agent(
     person_dir: Path,
     model: str = "claude-sonnet-4-20250514",
     execution_mode: str | None = None,
-    role: str | None = None,
 ):
     """Create AgentCore with all external dependencies mocked."""
     mc = ModelConfig(
         model=model,
         execution_mode=execution_mode,
-        role=role,
         api_key="test-key",
     )
     memory = MagicMock()
@@ -84,16 +82,10 @@ class TestIsClaude:
         assert agent._is_claude_model() is False
 
 
-# ── Delegate / reply tracking ─────────────────────────────
+# ── Callbacks / reply tracking ────────────────────────────
 
 
-class TestDelegateAndReply:
-    def test_set_delegate_fn(self, tmp_path):
-        agent = _make_agent(tmp_path)
-        fn = MagicMock()
-        agent.set_delegate_fn(fn)
-        agent._tool_handler.delegate_fn = fn
-
+class TestCallbacksAndReply:
     def test_set_on_message_sent(self, tmp_path):
         agent = _make_agent(tmp_path)
         fn = MagicMock()

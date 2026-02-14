@@ -31,7 +31,7 @@ from core.paths import load_prompt
 from core.prompt.builder import build_system_prompt, inject_shortterm
 from core.schemas import CycleResult, ModelConfig
 from core.memory.shortterm import SessionState, ShortTermMemory
-from core.tooling.handler import DelegateFn, ToolHandler
+from core.tooling.handler import ToolHandler
 
 logger = logging.getLogger("animaworks.agent")
 
@@ -81,12 +81,6 @@ class AgentCore:
             "direct" if self.model_config.api_key else f"env:{self.model_config.api_key_env}",
             self.model_config.api_base_url or "(default)",
         )
-
-    # ── Delegate callback ──────────────────────────────────
-
-    def set_delegate_fn(self, fn: DelegateFn) -> None:
-        """Inject the delegate callback (called from server/app.py)."""
-        self._tool_handler.delegate_fn = fn
 
     def set_on_message_sent(self, fn: Callable[[str, str, str], None]) -> None:
         """Inject a callback invoked after a send_message tool call."""
