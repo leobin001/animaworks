@@ -9,14 +9,30 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 
 class CronTask(BaseModel):
+    """Cron task definition supporting both LLM and command types.
+
+    LLM type:
+        - type: "llm" (default)
+        - description: Task instruction for LLM
+
+    Command type:
+        - type: "command"
+        - command: Bash command to execute
+        - OR tool + args: Internal tool to invoke
+    """
     name: str
     schedule: str
-    description: str
+    type: str = "llm"  # "llm" or "command"
+    description: str = ""  # LLM型の指示文
+    command: str | None = None  # Command型のbashコマンド
+    tool: str | None = None  # Command型の内部ツール名
+    args: dict[str, Any] | None = None  # toolの引数
 
 
 class ModelConfig(BaseModel):

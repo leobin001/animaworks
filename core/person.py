@@ -359,3 +359,102 @@ class DigitalPerson:
                     self._current_task = ""
         finally:
             self._notify_lock_released()
+    async def run_cron_command(
+        self,
+        task_name: str,
+        *,
+        command: str | None = None,
+        tool: str | None = None,
+        args: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Execute a command-type cron task (bash or internal tool).
+
+        Args:
+            task_name: Task identifier for logging
+            command: Bash command to execute (mutually exclusive with tool)
+            tool: Internal tool name (mutually exclusive with command)
+            args: Tool arguments (only used with tool)
+
+        Returns:
+            Dictionary with execution results (exit_code, stdout, stderr, duration_ms)
+        """
+        import time
+
+        logger.info("[%s] run_cron_command START task=%s", self.name, task_name)
+        start_ms = time.time_ns() // 1_000_000
+
+        stdout = ""
+        stderr = ""
+        exit_code = 0
+
+        try:
+            async with self._lock:
+                self._status = "working"
+                self._current_task = task_name
+
+                try:
+                    if command:
+                        # Execute bash command
+                        logger.debug("[%s] Executing bash: %s", self.name, command)
+                        proc = await asyncio.create_subprocess_shell(
+                            command,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout_bytes, stderr_bytes = await proc.communicate()
+                        stdout = stdout_bytes.decode("utf-8", errors="replace")
+                        stderr = stderr_bytes.decode("utf-8", errors="replace")
+                        exit_code = proc.returncode or 0
+
+                    elif tool:
+                        # Execute internal tool via ToolHandler
+                        logger.debug("[%s] Executing tool: %s", self.name, tool)
+                        result = self.agent._tool_handler.handle(tool, args or {})
+                        stdout = str(result)
+                        exit_code = 0
+
+                    else:
+                        stderr = "Neither command nor tool specified"
+                        exit_code = 1
+
+                    self._last_activity = datetime.now()
+
+                except Exception as e:
+                    stderr = f"{type(e).__name__}: {e}"
+                    exit_code = 1
+                    logger.exception(
+                        "[%s] run_cron_command FAILED task=%s", self.name, task_name
+                    )
+                finally:
+                    self._status = "idle"
+                    self._current_task = ""
+
+            duration_ms = (time.time_ns() // 1_000_000) - start_ms
+
+            # Log to cron_log with command-specific format
+            self.memory.append_cron_command_log(
+                task_name,
+                exit_code=exit_code,
+                stdout=stdout,
+                stderr=stderr,
+                duration_ms=duration_ms,
+            )
+
+            logger.info(
+                "[%s] run_cron_command END task=%s exit_code=%d duration_ms=%d",
+                self.name,
+                task_name,
+                exit_code,
+                duration_ms,
+            )
+
+            return {
+                "task": task_name,
+                "exit_code": exit_code,
+                "stdout": stdout[:1000],  # Preview for response
+                "stderr": stderr[:1000],
+                "duration_ms": duration_ms,
+            }
+
+        finally:
+            self._notify_lock_released()

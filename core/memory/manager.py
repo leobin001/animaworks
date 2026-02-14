@@ -257,6 +257,67 @@ class MemoryManager:
                 encoding="utf-8",
             )
 
+    def append_cron_command_log(
+        self,
+        task_name: str,
+        *,
+        exit_code: int,
+        stdout: str,
+        stderr: str,
+        duration_ms: int,
+    ) -> None:
+        """Append a command-type cron execution result to the daily log.
+
+        Logs include exit code, line counts, and previews (first+last 5 lines).
+        """
+        log_dir = self.person_dir / self._CRON_LOG_DIR
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = log_dir / f"{date.today().isoformat()}.jsonl"
+
+        # Count lines
+        stdout_lines_list = stdout.splitlines()
+        stderr_lines_list = stderr.splitlines()
+        stdout_line_count = len(stdout_lines_list)
+        stderr_line_count = len(stderr_lines_list)
+
+        # Generate preview: first 5 + last 5 lines, max 1000 chars total
+        def make_preview(lines_list: list[str]) -> str:
+            if not lines_list:
+                return ""
+            if len(lines_list) <= 10:
+                preview = "\n".join(lines_list)
+            else:
+                preview = "\n".join(lines_list[:5] + ["..."] + lines_list[-5:])
+            return preview[:1000]
+
+        stdout_preview = make_preview(stdout_lines_list)
+        stderr_preview = make_preview(stderr_lines_list)
+
+        import json as _json
+        entry = _json.dumps(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "task": task_name,
+                "exit_code": exit_code,
+                "stdout_lines": stdout_line_count,
+                "stderr_lines": stderr_line_count,
+                "stdout_preview": stdout_preview,
+                "stderr_preview": stderr_preview,
+                "duration_ms": duration_ms,
+            },
+            ensure_ascii=False,
+        )
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(entry + "\n")
+
+        # Keep file bounded
+        lines = path.read_text(encoding="utf-8").strip().splitlines()
+        if len(lines) > self._CRON_LOG_MAX_LINES:
+            path.write_text(
+                "\n".join(lines[-self._CRON_LOG_MAX_LINES:]) + "\n",
+                encoding="utf-8",
+            )
+
     def read_cron_log(self, days: int = 1) -> str:
         """Read cron logs for the last *days* days."""
         log_dir = self.person_dir / self._CRON_LOG_DIR

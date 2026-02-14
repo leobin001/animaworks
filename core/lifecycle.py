@@ -13,6 +13,7 @@ import re
 import time
 from typing import Any, Callable, Coroutine
 
+import yaml
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -146,51 +147,81 @@ class LifecycleManager:
                     trigger,
                     id=f"{person.name}_cron_{i}",
                     name=f"{person.name}: {task.name}",
-                    args=[person.name, task.name, task.description],
+                    args=[person.name, task],  # Pass entire CronTask object
                     replace_existing=True,
                 )
                 logger.info(
-                    "Cron '%s': %s (%s)", person.name, task.name, task.schedule
+                    "Cron '%s': %s (%s) [%s]",
+                    person.name,
+                    task.name,
+                    task.schedule,
+                    task.type,
                 )
 
-    async def _cron_wrapper(
-        self, name: str, task_name: str, description: str
-    ) -> None:
+    async def _cron_wrapper(self, name: str, task: CronTask) -> None:
+        """Wrapper for cron task execution (both LLM and command types)."""
         person = self.persons.get(name)
         if not person:
             return
 
-        logger.info("Cron: %s -> %s", name, task_name)
+        logger.info("Cron: %s -> %s [%s]", name, task.name, task.type)
         # Run cron tasks without awaiting lock — use create_task so
         # multiple simultaneous cron tasks don't block each other.
         asyncio.create_task(
-            self._run_cron_and_broadcast(person, name, task_name, description),
-            name=f"cron-{name}-{task_name}",
+            self._run_cron_and_broadcast(person, name, task),
+            name=f"cron-{name}-{task.name}",
         )
 
     async def _run_cron_and_broadcast(
         self,
         person: DigitalPerson,
         name: str,
-        task_name: str,
-        description: str,
+        task: CronTask,
     ) -> None:
-        """Execute a cron task and broadcast the result."""
+        """Execute a cron task (LLM or command type) and broadcast the result."""
         try:
-            result = await person.run_cron_task(task_name, description)
-            if self._ws_broadcast:
-                await self._ws_broadcast(
-                    {
-                        "type": "person.cron",
-                        "data": {
-                            "name": name,
-                            "task": task_name,
-                            "result": result.model_dump(),
-                        },
-                    }
+            if task.type == "llm":
+                # LLM-type: invoke agent.run_cycle
+                result = await person.run_cron_task(task.name, task.description)
+                broadcast_data = {
+                    "type": "person.cron",
+                    "data": {
+                        "name": name,
+                        "task": task.name,
+                        "task_type": "llm",
+                        "result": result.model_dump(),
+                    },
+                }
+            elif task.type == "command":
+                # Command-type: execute bash/tool directly
+                result = await person.run_cron_command(
+                    task.name,
+                    command=task.command,
+                    tool=task.tool,
+                    args=task.args,
                 )
+                broadcast_data = {
+                    "type": "person.cron",
+                    "data": {
+                        "name": name,
+                        "task": task.name,
+                        "task_type": "command",
+                        "result": result,
+                    },
+                }
+            else:
+                logger.warning(
+                    "Unknown cron task type '%s' for %s -> %s",
+                    task.type,
+                    name,
+                    task.name,
+                )
+                return
+
+            if self._ws_broadcast:
+                await self._ws_broadcast(broadcast_data)
         except Exception:
-            logger.exception("Cron task failed: %s -> %s", name, task_name)
+            logger.exception("Cron task failed: %s -> %s", name, task.name)
 
     # ── Inbox Watcher ──────────────────────────────────────
 
@@ -473,21 +504,36 @@ class LifecycleManager:
 
 
 def _parse_cron_md(content: str) -> list[CronTask]:
+    """Parse cron.md to extract CronTask definitions.
+
+    Supports both LLM-type and command-type tasks:
+
+    LLM-type:
+        ## Task Name (schedule)
+        type: llm
+        Description text...
+
+    Command-type (bash):
+        ## Task Name (schedule)
+        type: command
+        command: /path/to/script.sh
+
+    Command-type (tool):
+        ## Task Name (schedule)
+        type: command
+        tool: tool_name
+        args:
+          key: value
+    """
     tasks: list[CronTask] = []
     cur_name = ""
     cur_sched = ""
-    cur_desc: list[str] = []
+    cur_lines: list[str] = []
 
     for line in content.splitlines():
         if line.startswith("## "):
             if cur_name:
-                tasks.append(
-                    CronTask(
-                        name=cur_name,
-                        schedule=cur_sched,
-                        description="\n".join(cur_desc).strip(),
-                    )
-                )
+                tasks.append(_parse_single_cron_task(cur_name, cur_sched, cur_lines))
             header = line[3:].strip()
             sm = re.search(r"[（(](.+?)[）)]", header)
             if sm:
@@ -496,19 +542,70 @@ def _parse_cron_md(content: str) -> list[CronTask]:
             else:
                 cur_name = header
                 cur_sched = ""
-            cur_desc = []
+            cur_lines = []
         elif cur_name:
-            cur_desc.append(line)
+            cur_lines.append(line)
 
     if cur_name:
-        tasks.append(
-            CronTask(
-                name=cur_name,
-                schedule=cur_sched,
-                description="\n".join(cur_desc).strip(),
-            )
-        )
+        tasks.append(_parse_single_cron_task(cur_name, cur_sched, cur_lines))
     return tasks
+
+
+def _parse_single_cron_task(name: str, schedule: str, lines: list[str]) -> CronTask:
+    """Parse a single cron task definition from body lines."""
+    task_type = "llm"
+    command = None
+    tool = None
+    args = None
+    description_lines = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if stripped.startswith("type:"):
+            task_type = stripped[5:].strip()
+        elif stripped.startswith("command:"):
+            command = stripped[8:].strip()
+        elif stripped.startswith("tool:"):
+            tool = stripped[5:].strip()
+        elif stripped.startswith("args:"):
+            # Parse YAML args block (indented lines following "args:")
+            yaml_lines = [line]
+            i += 1
+            while i < len(lines):
+                next_line = lines[i]
+                # Continue if line is indented or empty
+                if next_line.startswith("  ") or not next_line.strip():
+                    yaml_lines.append(next_line)
+                    i += 1
+                else:
+                    break
+            i -= 1  # Back one line for outer loop increment
+
+            # Parse YAML
+            try:
+                parsed = yaml.safe_load("\n".join(yaml_lines))
+                if parsed and "args" in parsed:
+                    args = parsed["args"]
+            except yaml.YAMLError as e:
+                logger.warning("Failed to parse args YAML for task %s: %s", name, e)
+        else:
+            # Regular description line
+            description_lines.append(line)
+
+        i += 1
+
+    return CronTask(
+        name=name,
+        schedule=schedule,
+        type=task_type,
+        description="\n".join(description_lines).strip(),
+        command=command,
+        tool=tool,
+        args=args,
+    )
 
 
 _NTH_DAY_RANGE = {

@@ -66,6 +66,91 @@ Description
         assert len(tasks) == 1
         assert tasks[0].schedule == "毎日 10:00"
 
+    def test_llm_type_explicit(self):
+        """Test explicit LLM-type task parsing."""
+        content = """\
+## 業務計画（毎日 9:00 JST）
+type: llm
+長期記憶から昨日の進捗を確認する。
+"""
+        tasks = _parse_cron_md(content)
+        assert len(tasks) == 1
+        assert tasks[0].type == "llm"
+        assert tasks[0].name == "業務計画"
+        assert "長期記憶" in tasks[0].description
+        assert tasks[0].command is None
+        assert tasks[0].tool is None
+
+    def test_llm_type_default(self):
+        """Test LLM-type task with default type (no explicit type field)."""
+        content = """\
+## 日次報告（毎日 17:00）
+報告書を作成する。
+"""
+        tasks = _parse_cron_md(content)
+        assert len(tasks) == 1
+        assert tasks[0].type == "llm"  # Default type
+        assert "報告書" in tasks[0].description
+
+    def test_command_type_bash(self):
+        """Test command-type task with bash command."""
+        content = """\
+## バックアップ実行（毎日 2:00 JST）
+type: command
+command: /usr/local/bin/backup.sh
+"""
+        tasks = _parse_cron_md(content)
+        assert len(tasks) == 1
+        assert tasks[0].type == "command"
+        assert tasks[0].command == "/usr/local/bin/backup.sh"
+        assert tasks[0].tool is None
+        assert tasks[0].args is None
+
+    def test_command_type_tool_with_args(self):
+        """Test command-type task with internal tool and YAML args."""
+        content = """\
+## Slack通知（平日 9:00 JST）
+type: command
+tool: slack_send_message
+args:
+  channel: "#general"
+  message: "おはようございます！"
+"""
+        tasks = _parse_cron_md(content)
+        assert len(tasks) == 1
+        assert tasks[0].type == "command"
+        assert tasks[0].tool == "slack_send_message"
+        assert tasks[0].command is None
+        assert tasks[0].args is not None
+        assert tasks[0].args["channel"] == "#general"
+        assert tasks[0].args["message"] == "おはようございます！"
+
+    def test_mixed_types(self):
+        """Test parsing multiple tasks with different types."""
+        content = """\
+## 業務計画（毎日 9:00）
+type: llm
+計画を立てる。
+
+## バックアップ（毎日 2:00）
+type: command
+command: /bin/backup.sh
+
+## 通知送信（平日 10:00）
+type: command
+tool: send_notification
+args:
+  message: "Start working"
+"""
+        tasks = _parse_cron_md(content)
+        assert len(tasks) == 3
+        assert tasks[0].type == "llm"
+        assert tasks[1].type == "command"
+        assert tasks[1].command == "/bin/backup.sh"
+        assert tasks[2].type == "command"
+        assert tasks[2].tool == "send_notification"
+        assert tasks[2].args["message"] == "Start working"
+
 
 # ── _parse_schedule ───────────────────────────────────────
 
@@ -205,7 +290,14 @@ class TestCronWrapper:
         broadcast = AsyncMock()
         lm._ws_broadcast = broadcast
 
-        await lm._cron_wrapper("alice", "daily_report", "Generate report")
+        # Create CronTask object (LLM type)
+        task = CronTask(
+            name="daily_report",
+            schedule="毎日 9:00",
+            type="llm",
+            description="Generate report",
+        )
+        await lm._cron_wrapper("alice", task)
         # _cron_wrapper creates a background task; let it run
         await asyncio.sleep(0)
         person.run_cron_task.assert_called_once_with("daily_report", "Generate report")
@@ -213,7 +305,8 @@ class TestCronWrapper:
 
     async def test_cron_no_person(self):
         lm = LifecycleManager()
-        await lm._cron_wrapper("nobody", "task", "desc")
+        task = CronTask(name="task", schedule="毎日 10:00", description="desc")
+        await lm._cron_wrapper("nobody", task)
 
 
 class TestSetupHeartbeat:
@@ -292,3 +385,104 @@ class TestLifecycleStartShutdown:
         lm.shutdown()
         # After shutdown, the inbox watcher task should be in cancelling state
         assert lm._inbox_watcher_task.cancelling() > 0 or lm._inbox_watcher_task.cancelled()
+
+
+# ── Command-type cron execution ───────────────────────────
+
+
+class TestCommandTypeCron:
+    """Test command-type cron execution (bash and tool)."""
+
+    async def test_run_cron_command_bash_success(self):
+        """Test successful bash command execution in cron."""
+        from pathlib import Path
+        from unittest.mock import patch, MagicMock
+        from core.person import DigitalPerson
+        from core.memory import MemoryManager
+
+        # Create mock person
+        person_dir = Path("/tmp/test_person")
+        shared_dir = Path("/tmp/shared")
+        person_dir.mkdir(parents=True, exist_ok=True)
+        shared_dir.mkdir(parents=True, exist_ok=True)
+
+        with patch.object(MemoryManager, "read_model_config"):
+            person = DigitalPerson(person_dir, shared_dir)
+
+        # Mock append_cron_command_log
+        person.memory.append_cron_command_log = MagicMock()
+
+        # Execute command
+        result = await person.run_cron_command(
+            "test_task",
+            command="echo 'Hello World'",
+        )
+
+        # Verify result
+        assert result["exit_code"] == 0
+        assert "Hello World" in result["stdout"]
+        assert result["stderr"] == ""
+        person.memory.append_cron_command_log.assert_called_once()
+
+    async def test_run_cron_command_bash_failure(self):
+        """Test bash command that returns non-zero exit code."""
+        from pathlib import Path
+        from unittest.mock import patch, MagicMock
+        from core.person import DigitalPerson
+        from core.memory import MemoryManager
+
+        person_dir = Path("/tmp/test_person2")
+        shared_dir = Path("/tmp/shared2")
+        person_dir.mkdir(parents=True, exist_ok=True)
+        shared_dir.mkdir(parents=True, exist_ok=True)
+
+        with patch.object(MemoryManager, "read_model_config"):
+            person = DigitalPerson(person_dir, shared_dir)
+
+        person.memory.append_cron_command_log = MagicMock()
+
+        # Execute failing command
+        result = await person.run_cron_command(
+            "failing_task",
+            command="exit 1",
+        )
+
+        # Verify non-zero exit code
+        assert result["exit_code"] == 1
+        person.memory.append_cron_command_log.assert_called_once()
+
+    async def test_run_cron_command_tool(self):
+        """Test internal tool execution in cron."""
+        from pathlib import Path
+        from unittest.mock import patch, MagicMock
+        from core.person import DigitalPerson
+        from core.memory import MemoryManager
+
+        person_dir = Path("/tmp/test_person3")
+        shared_dir = Path("/tmp/shared3")
+        person_dir.mkdir(parents=True, exist_ok=True)
+        shared_dir.mkdir(parents=True, exist_ok=True)
+
+        with patch.object(MemoryManager, "read_model_config"):
+            person = DigitalPerson(person_dir, shared_dir)
+
+        person.memory.append_cron_command_log = MagicMock()
+
+        # Mock tool_handler.handle
+        person.agent._tool_handler.handle = MagicMock(return_value="Tool executed successfully")
+
+        # Execute tool
+        result = await person.run_cron_command(
+            "tool_task",
+            tool="test_tool",
+            args={"key": "value"},
+        )
+
+        # Verify result
+        assert result["exit_code"] == 0
+        assert "Tool executed successfully" in result["stdout"]
+        person.agent._tool_handler.handle.assert_called_once_with(
+            "test_tool",
+            {"key": "value"},
+        )
+        person.memory.append_cron_command_log.assert_called_once()
