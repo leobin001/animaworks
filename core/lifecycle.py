@@ -28,6 +28,9 @@ BroadcastFn = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
 # to A, A replies to B, …).
 _MSG_HEARTBEAT_COOLDOWN_S = 60
 
+_CASCADE_WINDOW_S = 600   # 10 minutes
+_CASCADE_THRESHOLD = 4     # max round-trips per pair within window
+
 _DAY_MAP = {
     "月曜": "mon",
     "火曜": "tue",
@@ -50,6 +53,7 @@ class LifecycleManager:
         self._pending_triggers: set[str] = set()
         self._deferred_inbox: set[str] = set()
         self._last_msg_heartbeat_end: dict[str, float] = {}
+        self._pair_heartbeat_times: dict[tuple[str, str], list[float]] = {}
 
     def set_broadcast(self, fn: BroadcastFn) -> None:
         self._ws_broadcast = fn
@@ -177,6 +181,36 @@ class LifecycleManager:
         last = self._last_msg_heartbeat_end.get(name, 0.0)
         return (time.monotonic() - last) < _MSG_HEARTBEAT_COOLDOWN_S
 
+    def _check_cascade(self, person_name: str, senders: set[str]) -> bool:
+        """Return True if any (person, sender) pair exceeds cascade threshold."""
+        now = time.monotonic()
+        for sender in senders:
+            keys = [(person_name, sender), (sender, person_name)]
+            total = 0
+            for k in keys:
+                times = self._pair_heartbeat_times.get(k, [])
+                # Evict expired entries
+                times = [t for t in times if now - t < _CASCADE_WINDOW_S]
+                self._pair_heartbeat_times[k] = times
+                if not times and k in self._pair_heartbeat_times:
+                    del self._pair_heartbeat_times[k]
+                total += len(times)
+            if total >= _CASCADE_THRESHOLD:
+                logger.warning(
+                    "CASCADE DETECTED: %s <-> %s (%d round-trips in %ds window). "
+                    "Suppressing message-triggered heartbeat.",
+                    person_name, sender, total, _CASCADE_WINDOW_S,
+                )
+                return True
+        return False
+
+    def _record_pair_heartbeat(self, person_name: str, senders: set[str]) -> None:
+        """Record a heartbeat exchange for cascade tracking."""
+        now = time.monotonic()
+        for sender in senders:
+            key = (person_name, sender)
+            self._pair_heartbeat_times.setdefault(key, []).append(now)
+
     async def _inbox_watcher_loop(self) -> None:
         """Poll inbox dirs every 2s; trigger heartbeat on new messages."""
         logger.info("Inbox watcher started (poll interval: 2s)")
@@ -221,6 +255,13 @@ class LifecycleManager:
         if not person:
             self._pending_triggers.discard(name)
             return
+
+        # Peek at inbox senders for cascade detection
+        senders = {m.from_person for m in person.messenger.receive()}
+        if senders and self._check_cascade(name, senders):
+            self._pending_triggers.discard(name)
+            return
+
         try:
             logger.info("Message-triggered heartbeat: %s", name)
             result = await person.run_heartbeat()
@@ -236,6 +277,8 @@ class LifecycleManager:
         finally:
             self._pending_triggers.discard(name)
             self._last_msg_heartbeat_end[name] = time.monotonic()
+            if senders:
+                self._record_pair_heartbeat(name, senders)
 
     # ── Lifecycle ─────────────────────────────────────────
 
