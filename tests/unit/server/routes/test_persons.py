@@ -129,8 +129,8 @@ class TestGetPerson:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/nonexistent")
-        data = resp.json()
-        assert data["error"] == "Person not found"
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Person not found: nonexistent"
 
 
 # ── POST /persons/{name}/trigger ─────────────────────────
@@ -155,5 +155,5 @@ class TestTriggerHeartbeat:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/api/persons/nobody/trigger")
-        data = resp.json()
-        assert data["error"] == "Person not found"
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Person not found: nobody"
