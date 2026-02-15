@@ -9,13 +9,12 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 
-def _make_test_app(persons_dir: Path | None = None, person_names: list[str] | None = None):
+def _make_test_app(persons_dir: Path | None = None):
     from fastapi import FastAPI
     from server.routes.sessions import create_sessions_router
 
     app = FastAPI()
     app.state.persons_dir = persons_dir or Path("/tmp/fake/persons")
-    app.state.person_names = person_names or []
     router = create_sessions_router()
     app.include_router(router, prefix="/api")
     return app
@@ -33,12 +32,20 @@ class TestListSessions:
         assert resp.status_code == 404
         assert resp.json()["detail"] == "Person not found: nobody"
 
+    @patch("server.routes.sessions.MemoryManager")
     @patch("server.routes.sessions.ConversationMemory")
     @patch("server.routes.sessions.ShortTermMemory")
-    async def test_list_sessions_empty(self, mock_stm_cls, mock_conv_cls, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+    @patch("core.config.models.load_model_config")
+    async def test_list_sessions_empty(
+        self, mock_load_cfg, mock_stm_cls, mock_conv_cls, mock_mm_cls, tmp_path
+    ):
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         (person_dir / "episodes").mkdir()
+
+        # load_model_config mock
+        mock_load_cfg.return_value = MagicMock()
 
         # ConversationMemory mock
         mock_state = MagicMock()
@@ -54,7 +61,12 @@ class TestListSessions:
         mock_stm._archive_dir = person_dir / "shortterm" / "archive"
         mock_stm_cls.return_value = mock_stm
 
-        app = _make_test_app(persons_dir=tmp_path, person_names=["alice"])
+        # MemoryManager mock
+        mock_mm = MagicMock()
+        mock_mm.episodes_dir = person_dir / "episodes"
+        mock_mm_cls.return_value = mock_mm
+
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/sessions")
@@ -66,14 +78,20 @@ class TestListSessions:
         assert data["episodes"] == []
         assert data["transcripts"] == []
 
+    @patch("server.routes.sessions.MemoryManager")
     @patch("server.routes.sessions.ConversationMemory")
     @patch("server.routes.sessions.ShortTermMemory")
+    @patch("core.config.models.load_model_config")
     async def test_list_sessions_with_active_conversation(
-        self, mock_stm_cls, mock_conv_cls, tmp_path
+        self, mock_load_cfg, mock_stm_cls, mock_conv_cls, mock_mm_cls, tmp_path
     ):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         (person_dir / "episodes").mkdir()
+
+        # load_model_config mock
+        mock_load_cfg.return_value = MagicMock()
 
         mock_turn = MagicMock()
         mock_turn.timestamp = "2026-01-01T12:00:00"
@@ -92,7 +110,12 @@ class TestListSessions:
         mock_stm._archive_dir = person_dir / "shortterm" / "archive"
         mock_stm_cls.return_value = mock_stm
 
-        app = _make_test_app(persons_dir=tmp_path, person_names=["alice"])
+        # MemoryManager mock
+        mock_mm = MagicMock()
+        mock_mm.episodes_dir = person_dir / "episodes"
+        mock_mm_cls.return_value = mock_mm
+
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/sessions")
@@ -117,8 +140,9 @@ class TestGetSessionDetail:
 
     @patch("server.routes.sessions.ShortTermMemory")
     async def test_session_not_found(self, mock_stm_cls, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         archive_dir = person_dir / "shortterm" / "archive"
         archive_dir.mkdir(parents=True)
 
@@ -126,7 +150,7 @@ class TestGetSessionDetail:
         mock_stm._archive_dir = archive_dir
         mock_stm_cls.return_value = mock_stm
 
-        app = _make_test_app(persons_dir=tmp_path, person_names=["alice"])
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/sessions/nonexistent")
@@ -135,8 +159,9 @@ class TestGetSessionDetail:
 
     @patch("server.routes.sessions.ShortTermMemory")
     async def test_session_detail_success(self, mock_stm_cls, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         archive_dir = person_dir / "shortterm" / "archive"
         archive_dir.mkdir(parents=True)
 
@@ -150,7 +175,7 @@ class TestGetSessionDetail:
         mock_stm._archive_dir = archive_dir
         mock_stm_cls.return_value = mock_stm
 
-        app = _make_test_app(persons_dir=tmp_path, person_names=["alice"])
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/sessions/20260101")
@@ -163,8 +188,9 @@ class TestGetSessionDetail:
 
     @patch("server.routes.sessions.ShortTermMemory")
     async def test_session_corrupted_json(self, mock_stm_cls, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         archive_dir = person_dir / "shortterm" / "archive"
         archive_dir.mkdir(parents=True)
 
@@ -174,7 +200,7 @@ class TestGetSessionDetail:
         mock_stm._archive_dir = archive_dir
         mock_stm_cls.return_value = mock_stm
 
-        app = _make_test_app(persons_dir=tmp_path, person_names=["alice"])
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/sessions/bad")
@@ -195,9 +221,14 @@ class TestGetTranscript:
         assert resp.json()["detail"] == "Person not found: nobody"
 
     @patch("server.routes.sessions.ConversationMemory")
-    async def test_get_transcript_success(self, mock_conv_cls, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+    @patch("core.config.models.load_model_config")
+    async def test_get_transcript_success(self, mock_load_cfg, mock_conv_cls, tmp_path):
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
+
+        # load_model_config mock
+        mock_load_cfg.return_value = MagicMock()
 
         mock_conv = MagicMock()
         mock_conv.load_transcript.return_value = [
@@ -205,7 +236,7 @@ class TestGetTranscript:
         ]
         mock_conv_cls.return_value = mock_conv
 
-        app = _make_test_app(persons_dir=tmp_path, person_names=["alice"])
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/transcripts/2026-01-01")

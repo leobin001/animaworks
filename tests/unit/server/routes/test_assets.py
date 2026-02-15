@@ -44,14 +44,15 @@ class TestListAssets:
         assert resp.json()["assets"] == []
 
     async def test_list_assets(self, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         assets_dir = person_dir / "assets"
         assets_dir.mkdir()
         (assets_dir / "avatar.png").write_bytes(b"\x89PNG")
         (assets_dir / "model.glb").write_bytes(b"\x00")
 
-        app = _make_test_app(persons_dir=tmp_path)
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/assets")
@@ -87,14 +88,15 @@ class TestGetAssetMetadata:
         assert data["assets"] == {}
 
     async def test_metadata_with_color(self, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         (person_dir / "identity.md").write_text(
             "# Alice\nイメージカラー: ピンク #FF69B4\n", encoding="utf-8"
         )
         (person_dir / "assets").mkdir()
 
-        app = _make_test_app(persons_dir=tmp_path)
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/assets/metadata")
@@ -102,8 +104,9 @@ class TestGetAssetMetadata:
         assert data["colors"] == {"image_color": "#FF69B4"}
 
     async def test_metadata_with_assets_and_animations(self, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         (person_dir / "identity.md").write_text("# Alice", encoding="utf-8")
         assets_dir = person_dir / "assets"
         assets_dir.mkdir()
@@ -112,7 +115,7 @@ class TestGetAssetMetadata:
         (assets_dir / "anim_idle.glb").write_bytes(b"\x00")
         (assets_dir / "anim_walk.glb").write_bytes(b"\x00")
 
-        app = _make_test_app(persons_dir=tmp_path)
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/assets/metadata")
@@ -144,23 +147,25 @@ class TestGetAsset:
         assert resp.status_code in (400, 404)
 
     async def test_asset_not_found(self, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         (person_dir / "assets").mkdir()
-        app = _make_test_app(persons_dir=tmp_path)
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/assets/missing.png")
         assert resp.status_code == 404
 
     async def test_serve_png(self, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         assets_dir = person_dir / "assets"
         assets_dir.mkdir()
         (assets_dir / "avatar.png").write_bytes(b"\x89PNG\r\n\x1a\n")
 
-        app = _make_test_app(persons_dir=tmp_path)
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/assets/avatar.png")
@@ -168,13 +173,14 @@ class TestGetAsset:
         assert "image/png" in resp.headers.get("content-type", "")
 
     async def test_serve_glb(self, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         assets_dir = person_dir / "assets"
         assets_dir.mkdir()
         (assets_dir / "model.glb").write_bytes(b"\x00\x00\x00\x00")
 
-        app = _make_test_app(persons_dir=tmp_path)
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/persons/alice/assets/model.glb")
@@ -182,13 +188,14 @@ class TestGetAsset:
         assert "model/gltf-binary" in resp.headers.get("content-type", "")
 
     async def test_head_request(self, tmp_path):
-        person_dir = tmp_path / "alice"
-        person_dir.mkdir()
+        persons_dir = tmp_path / "persons"
+        person_dir = persons_dir / "alice"
+        person_dir.mkdir(parents=True)
         assets_dir = person_dir / "assets"
         assets_dir.mkdir()
         (assets_dir / "avatar.png").write_bytes(b"\x89PNG")
 
-        app = _make_test_app(persons_dir=tmp_path)
+        app = _make_test_app(persons_dir=persons_dir)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.head("/api/persons/alice/assets/avatar.png")

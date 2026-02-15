@@ -176,7 +176,7 @@ class TestHandleChunkBootstrap:
         assert "初期化中" in frame
         assert text == ""
 
-    def test_bootstrap_start_emits_websocket_event(self):
+    async def test_bootstrap_start_emits_websocket_event(self):
         """When request and person_name are provided, bootstrap_start
         should trigger a WebSocket emit."""
         from server.routes.chat import _handle_chunk
@@ -194,7 +194,7 @@ class TestHandleChunkBootstrap:
         assert frame is not None
         assert "event: bootstrap" in frame
 
-    def test_bootstrap_complete_emits_websocket_event(self):
+    async def test_bootstrap_complete_emits_websocket_event(self):
         """When request and person_name are provided, bootstrap_complete
         should trigger a WebSocket emit."""
         from server.routes.chat import _handle_chunk
