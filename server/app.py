@@ -76,11 +76,16 @@ def create_app(persons_dir: Path, shared_dir: Path) -> FastAPI:
         log_dir=log_dir,
     )
 
-    # Discover person names from disk
+    # Discover person names from disk (respect status.json)
+    from core.supervisor.manager import ProcessSupervisor as _PS
+
     person_names: list[str] = []
     if persons_dir.exists():
         for person_dir in sorted(persons_dir.iterdir()):
             if person_dir.is_dir() and (person_dir / "identity.md").exists():
+                if not _PS.read_person_enabled(person_dir):
+                    logger.info("Skipping disabled person: %s", person_dir.name)
+                    continue
                 person_names.append(person_dir.name)
                 logger.info("Discovered person: %s", person_dir.name)
 

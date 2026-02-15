@@ -269,6 +269,37 @@ async def test_reconcile_skips_already_running(supervisor, temp_dirs):
 
 
 @pytest.mark.asyncio
+async def test_reconcile_start_person_failure(supervisor, temp_dirs):
+    """start_person raises → exception logged, other persons still processed."""
+    persons_dir = temp_dirs["persons_dir"]
+    persons_dir.mkdir(parents=True)
+    alice_dir = persons_dir / "alice"
+    alice_dir.mkdir()
+    (alice_dir / "identity.md").write_text("Alice identity", encoding="utf-8")
+    bob_dir = persons_dir / "bob"
+    bob_dir.mkdir()
+    (bob_dir / "identity.md").write_text("Bob identity", encoding="utf-8")
+
+    # start_person fails for alice but succeeds for bob
+    async def start_side_effect(name: str) -> None:
+        if name == "alice":
+            raise RuntimeError("spawn failed")
+
+    supervisor.start_person = AsyncMock(side_effect=start_side_effect)
+    supervisor.stop_person = AsyncMock()
+    added_callback = MagicMock()
+    supervisor.on_person_added = added_callback
+
+    # Should not raise — failure is caught internally
+    await supervisor._reconcile()
+
+    # alice attempted but failed; bob attempted and succeeded
+    assert supervisor.start_person.call_count == 2
+    # Callback only invoked for successful starts (bob)
+    added_callback.assert_called_once_with("bob")
+
+
+@pytest.mark.asyncio
 async def test_reconcile_callback_not_set(supervisor, temp_dirs):
     """Callbacks are None → no error when reconciliation triggers actions."""
     persons_dir = temp_dirs["persons_dir"]
