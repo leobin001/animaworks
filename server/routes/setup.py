@@ -48,7 +48,10 @@ AVAILABLE_PROVIDERS = [
     },
 ]
 
-AVAILABLE_LOCALES = ["ja", "en"]
+AVAILABLE_LOCALES = [
+    "en", "ja", "zh-CN", "zh-TW", "ko", "es", "fr", "de",
+    "pt", "it", "ru", "ar", "hi", "tr", "vi", "th", "id",
+]
 
 
 # ── Request/Response models ────────────────────────────────
@@ -240,14 +243,44 @@ def create_setup_router() -> APIRouter:
 # ── Helper functions ───────────────────────────────────────
 
 
+def _normalize_locale(
+    lang: str,
+    zh_simplified: set[str],
+    zh_traditional: set[str],
+) -> str:
+    """Normalize a locale tag to match AVAILABLE_LOCALES entries.
+
+    - Chinese variants are mapped to zh-CN or zh-TW
+    - Other languages are reduced to their primary subtag (e.g. en-US → en)
+    """
+    parts = lang.replace("_", "-").split("-")
+    primary = parts[0]
+
+    if primary == "zh":
+        if len(parts) < 2:
+            return "zh-CN"  # bare "zh" defaults to Simplified
+        subtag = parts[1].lower()
+        if subtag in zh_traditional:
+            return "zh-TW"
+        return "zh-CN"
+
+    return primary
+
+
 def _parse_accept_language(header: str) -> str:
     """Parse Accept-Language header and return best matching locale.
 
     Supports weighted values like ``ja;q=0.9,en-US;q=0.8``.
+    Handles Chinese variants: zh-CN/zh-Hans/zh-SG → zh-CN,
+    zh-TW/zh-Hant/zh-HK/zh-MO → zh-TW, bare zh → zh-CN.
     Returns the first match from AVAILABLE_LOCALES, or ``"ja"`` as fallback.
     """
     if not header:
         return "ja"
+
+    # Chinese variant mapping
+    _ZH_SIMPLIFIED = {"cn", "hans", "sg"}
+    _ZH_TRADITIONAL = {"tw", "hant", "hk", "mo"}
 
     # Parse entries: "ja;q=0.9,en-US;q=0.8,en;q=0.7"
     entries: list[tuple[float, str]] = []
@@ -264,9 +297,10 @@ def _parse_accept_language(header: str) -> str:
         else:
             lang = part
             q = 1.0
-        # Normalise: "en-US" → "en"
-        lang = lang.strip().split("-")[0].lower()
-        entries.append((q, lang))
+
+        lang = lang.strip().lower()
+        normalized = _normalize_locale(lang, _ZH_SIMPLIFIED, _ZH_TRADITIONAL)
+        entries.append((q, normalized))
 
     # Sort by quality descending
     entries.sort(key=lambda e: e[0], reverse=True)

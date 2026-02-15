@@ -194,7 +194,7 @@ class TestSetupEndpoints:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/api/setup/detect-locale",
-                headers={"Accept-Language": "fr-FR,de;q=0.9"},
+                headers={"Accept-Language": "sw,cy;q=0.9"},
             )
             assert resp.status_code == 200
             body = resp.json()
@@ -209,6 +209,45 @@ class TestSetupEndpoints:
             assert resp.status_code == 200
             body = resp.json()
             assert body["detected"] == "ja"
+
+    @pytest.mark.asyncio
+    async def test_detect_locale_chinese_simplified(self, setup_app):
+        """GET /api/setup/detect-locale detects zh-CN from Accept-Language."""
+        transport = ASGITransport(app=setup_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/api/setup/detect-locale",
+                headers={"Accept-Language": "zh-CN,en;q=0.9"},
+            )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["detected"] == "zh-CN"
+
+    @pytest.mark.asyncio
+    async def test_detect_locale_chinese_traditional(self, setup_app):
+        """GET /api/setup/detect-locale detects zh-TW from Accept-Language."""
+        transport = ASGITransport(app=setup_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/api/setup/detect-locale",
+                headers={"Accept-Language": "zh-TW,en;q=0.9"},
+            )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["detected"] == "zh-TW"
+
+    @pytest.mark.asyncio
+    async def test_detect_locale_zh_hant_variant(self, setup_app):
+        """GET /api/setup/detect-locale maps zh-Hant to zh-TW."""
+        transport = ASGITransport(app=setup_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/api/setup/detect-locale",
+                headers={"Accept-Language": "zh-Hant,en;q=0.9"},
+            )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["detected"] == "zh-TW"
 
     @pytest.mark.asyncio
     async def test_list_templates(self, setup_app):
@@ -364,6 +403,28 @@ class TestSetupComplete:
         config_raw = json.loads((data_dir / "config.json").read_text("utf-8"))
         assert config_raw["setup_complete"] is True
         assert config_raw["locale"] == "en"
+
+    @pytest.mark.asyncio
+    async def test_complete_setup_with_chinese_locale(self, data_dir: Path):
+        """Complete setup with zh-CN locale and verify it's stored in config."""
+        _write_config(data_dir, setup_complete=False)
+        app = _create_app(data_dir)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/api/setup/complete",
+                json={"locale": "zh-CN"},
+            )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["status"] == "ok"
+
+        # Verify config was updated with zh-CN locale
+        invalidate_cache()
+        config_raw = json.loads((data_dir / "config.json").read_text("utf-8"))
+        assert config_raw["setup_complete"] is True
+        assert config_raw["locale"] == "zh-CN"
 
     @pytest.mark.asyncio
     async def test_complete_setup_with_credentials(self, data_dir: Path):

@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from server.routes.setup import (
     AVAILABLE_LOCALES,
     AVAILABLE_PROVIDERS,
+    _normalize_locale,
     _parse_accept_language,
     create_setup_router,
 )
@@ -27,6 +28,47 @@ def _make_test_app(setup_complete: bool = False):
     router = create_setup_router()
     app.include_router(router)
     return app
+
+
+# ── _normalize_locale ─────────────────────────────────────
+
+_ZH_SIMPLIFIED = {"cn", "hans", "sg"}
+_ZH_TRADITIONAL = {"tw", "hant", "hk", "mo"}
+
+
+class TestNormalizeLocale:
+    def test_bare_zh_defaults_to_simplified(self):
+        assert _normalize_locale("zh", _ZH_SIMPLIFIED, _ZH_TRADITIONAL) == "zh-CN"
+
+    def test_zh_cn(self):
+        assert _normalize_locale("zh-cn", _ZH_SIMPLIFIED, _ZH_TRADITIONAL) == "zh-CN"
+
+    def test_zh_tw(self):
+        assert _normalize_locale("zh-tw", _ZH_SIMPLIFIED, _ZH_TRADITIONAL) == "zh-TW"
+
+    def test_zh_hans(self):
+        assert _normalize_locale("zh-hans", _ZH_SIMPLIFIED, _ZH_TRADITIONAL) == "zh-CN"
+
+    def test_zh_hant(self):
+        assert _normalize_locale("zh-hant", _ZH_SIMPLIFIED, _ZH_TRADITIONAL) == "zh-TW"
+
+    def test_zh_hk(self):
+        assert _normalize_locale("zh-hk", _ZH_SIMPLIFIED, _ZH_TRADITIONAL) == "zh-TW"
+
+    def test_zh_mo(self):
+        assert _normalize_locale("zh-mo", _ZH_SIMPLIFIED, _ZH_TRADITIONAL) == "zh-TW"
+
+    def test_zh_sg(self):
+        assert _normalize_locale("zh-sg", _ZH_SIMPLIFIED, _ZH_TRADITIONAL) == "zh-CN"
+
+    def test_en_us_normalizes_to_primary(self):
+        assert _normalize_locale("en-us", _ZH_SIMPLIFIED, _ZH_TRADITIONAL) == "en"
+
+    def test_fr_passthrough(self):
+        assert _normalize_locale("fr", _ZH_SIMPLIFIED, _ZH_TRADITIONAL) == "fr"
+
+    def test_zh_tw_underscore(self):
+        assert _normalize_locale("zh_tw", _ZH_SIMPLIFIED, _ZH_TRADITIONAL) == "zh-TW"
 
 
 # ── _parse_accept_language ───────────────────────────────
@@ -56,10 +98,10 @@ class TestParseAcceptLanguage:
         assert _parse_accept_language("ja,en;q=0.5") == "ja"
 
     def test_unknown_locale_falls_back_to_ja(self):
-        assert _parse_accept_language("fr,de") == "ja"
+        assert _parse_accept_language("sw,cy") == "ja"
 
     def test_mixed_known_unknown(self):
-        assert _parse_accept_language("fr;q=1.0,en;q=0.8") == "en"
+        assert _parse_accept_language("fr;q=1.0,en;q=0.8") == "fr"
 
     def test_complex_header(self):
         header = "ja;q=0.9,en-US;q=0.8,en;q=0.7,fr;q=0.5"
@@ -68,6 +110,30 @@ class TestParseAcceptLanguage:
     def test_invalid_quality_ignored(self):
         # "en;q=notanumber" → q=0.0, "ja" → q=1.0
         assert _parse_accept_language("en;q=notanumber,ja") == "ja"
+
+    def test_zh_cn_header(self):
+        assert _parse_accept_language("zh-CN") == "zh-CN"
+
+    def test_zh_tw_header(self):
+        assert _parse_accept_language("zh-TW") == "zh-TW"
+
+    def test_zh_hans_maps_to_simplified(self):
+        assert _parse_accept_language("zh-Hans") == "zh-CN"
+
+    def test_zh_hant_maps_to_traditional(self):
+        assert _parse_accept_language("zh-Hant") == "zh-TW"
+
+    def test_zh_hk_maps_to_traditional(self):
+        assert _parse_accept_language("zh-HK") == "zh-TW"
+
+    def test_bare_zh_defaults_to_simplified(self):
+        assert _parse_accept_language("zh") == "zh-CN"
+
+    def test_korean_header(self):
+        assert _parse_accept_language("ko") == "ko"
+
+    def test_spanish_header(self):
+        assert _parse_accept_language("es") == "es"
 
 
 # ── GET /api/setup/environment ───────────────────────────
