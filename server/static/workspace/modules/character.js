@@ -5,10 +5,38 @@
 
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 import { probeAsset, fetchAssetMetadata } from "./api.js";
+import { modelCache } from "./model-cache.js";
 
-/** Shared GLTFLoader instance. */
+/** Shared DRACOLoader for Draco-compressed GLBs. */
+const _dracoLoader = new DRACOLoader();
+_dracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
+_dracoLoader.setDecoderConfig({ type: "wasm" });
+_dracoLoader.preload();
+
+/** Shared GLTFLoader instance with Draco support. */
 const _gltfLoader = new GLTFLoader();
+_gltfLoader.setDRACOLoader(_dracoLoader);
+
+/** In-memory cache for parsed GLTF scenes (avoids re-parsing within session). */
+const _parsedCache = new Map();
+
+/**
+ * Load and cache a GLTF/GLB model.
+ * Uses IndexedDB for persistent cache, plus in-memory cache for session reuse.
+ * @param {string} url
+ * @returns {Promise<{scene: THREE.Group, animations: THREE.AnimationClip[]}>}
+ */
+async function _loadGLTFCached(url) {
+  if (_parsedCache.has(url)) {
+    const cached = _parsedCache.get(url);
+    return { scene: cached.scene.clone(true), animations: cached.animations };
+  }
+  const gltf = await modelCache.loadGLTF(url, _gltfLoader);
+  _parsedCache.set(url, gltf);
+  return { scene: gltf.scene.clone(true), animations: gltf.animations };
+}
 
 // ── Constants ──────────────────────
 
@@ -944,9 +972,7 @@ function _applyMetadataColor(name, hexStr) {
  * @returns {Promise<THREE.Group>}
  */
 async function _createGLBCharacter(name, position, url, isRigged) {
-  const gltf = await new Promise((resolve, reject) => {
-    _gltfLoader.load(url, resolve, undefined, reject);
-  });
+  const gltf = await _loadGLTFCached(url);
 
   const group = new THREE.Group();
   group.name = `character_${name}`;
@@ -1045,9 +1071,7 @@ async function _loadAnimationClips(name) {
     if (!url) return;
 
     try {
-      const gltf = await new Promise((resolve, reject) => {
-        _gltfLoader.load(url, resolve, undefined, reject);
-      });
+      const gltf = await _loadGLTFCached(url);
       if (gltf.animations && gltf.animations.length > 0) {
         clips[filename] = gltf.animations[0];
       }

@@ -233,6 +233,11 @@ def cli_main() -> None:
     )
     p_logs.set_defaults(func=_lazy_logs)
 
+    # ── Optimize Assets ──────────────────────────────────────
+    from cli.commands import optimize_assets
+
+    optimize_assets.register(sub)
+
     args = parser.parse_args()
 
     # Apply --data-dir override before any command

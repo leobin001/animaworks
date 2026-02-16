@@ -140,10 +140,30 @@ def create_assets_router() -> APIRouter:
 
         suffix = file_path.suffix.lower()
         content_type = _ASSET_CONTENT_TYPES.get(suffix, "application/octet-stream")
+
+        # Generate ETag from file metadata
+        stat = file_path.stat()
+        etag = f'"{stat.st_mtime_ns}-{stat.st_size}"'
+
+        # Return 304 Not Modified if ETag matches
+        if_none_match = request.headers.get("if-none-match")
+        if if_none_match and if_none_match == etag:
+            from starlette.responses import Response
+            return Response(
+                status_code=304,
+                headers={
+                    "ETag": etag,
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                },
+            )
+
         return FileResponse(
             file_path,
             media_type=content_type,
-            headers={"Cache-Control": "public, max-age=3600"},
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "ETag": etag,
+            },
         )
 
     @router.post("/persons/{name}/assets/generate")

@@ -683,6 +683,9 @@ class MeshyClient:
     def download_rigging_animations(self, task: dict[str, Any]) -> dict[str, bytes]:
         """Download built-in walking/running animations from rigging task.
 
+        Prefers armature-only GLBs (skeleton + animation, no mesh) when
+        available.  Falls back to full model GLBs.
+
         Returns:
             Dict mapping animation name to GLB bytes.
         """
@@ -690,7 +693,8 @@ class MeshyClient:
         basic = result.get("basic_animations", {})
         animations: dict[str, bytes] = {}
         for name in ("walking", "running"):
-            url = basic.get(f"{name}_glb_url")
+            # Prefer armature-only (much smaller, ~50-500 KB vs ~27 MB)
+            url = basic.get(f"{name}_armature_glb_url") or basic.get(f"{name}_glb_url")
             if url:
                 logger.debug("Downloading %s animation …", name)
                 resp = httpx.get(url, timeout=_DOWNLOAD_TIMEOUT)
@@ -769,6 +773,108 @@ class MeshyClient:
         resp = httpx.get(url, timeout=_DOWNLOAD_TIMEOUT)
         resp.raise_for_status()
         return resp.content
+
+
+# ── gltf-transform helpers ────────────────────────────────────
+
+
+def _run_gltf_transform(args: list[str], glb_path: Path) -> bool:
+    """Run gltf-transform CLI command. Returns True on success."""
+    import shutil
+    import subprocess
+
+    npx = shutil.which("npx")
+    if npx is None:
+        logger.warning("npx not found; skipping gltf-transform for %s", glb_path)
+        return False
+
+    cmd = [npx, "--yes", "@gltf-transform/cli", *args]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        return True
+    except FileNotFoundError:
+        logger.warning("gltf-transform not available; skipping for %s", glb_path)
+        return False
+    except subprocess.CalledProcessError as exc:
+        logger.warning("gltf-transform failed for %s: %s", glb_path, exc.stderr[:500] if exc.stderr else exc)
+        return False
+    except subprocess.TimeoutExpired:
+        logger.warning("gltf-transform timed out for %s", glb_path)
+        return False
+
+
+def strip_mesh_from_glb(glb_path: Path) -> bool:
+    """Remove mesh/material/texture data from a GLB, keeping only skeleton + animation.
+
+    Uses a Node.js inline script via gltf-transform programmatic API because
+    the CLI does not have a dedicated 'strip meshes' command.
+
+    Returns True on success, False if skipped or failed.
+    """
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        logger.warning("node not found; skipping mesh strip for %s", glb_path)
+        return False
+
+    script = """
+const { NodeIO } = require("@gltf-transform/core");
+const { prune } = require("@gltf-transform/functions");
+
+(async () => {
+    const io = new NodeIO();
+    const doc = await io.read(process.argv[1]);
+    for (const node of doc.getRoot().listNodes()) {
+        node.setMesh(null);
+    }
+    for (const mat of doc.getRoot().listMaterials()) {
+        mat.dispose();
+    }
+    for (const tex of doc.getRoot().listTextures()) {
+        tex.dispose();
+    }
+    await doc.transform(prune());
+    await io.write(process.argv[1], doc);
+})();
+""".strip()
+
+    try:
+        # Ensure packages are available
+        subprocess.run(
+            [shutil.which("npx") or "npx", "--yes", "@gltf-transform/cli", "--help"],
+            check=True, capture_output=True, timeout=60,
+        )
+        subprocess.run(
+            [node, "-e", script, str(glb_path)],
+            check=True, capture_output=True, timeout=120,
+            env={**os.environ, "NODE_PATH": ""},
+        )
+        logger.info("Stripped mesh from %s (now %d bytes)", glb_path, glb_path.stat().st_size)
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        logger.warning("Mesh strip failed for %s: %s", glb_path, exc)
+        return False
+
+
+def optimize_glb(glb_path: Path) -> bool:
+    """Apply Draco compression to a GLB file using gltf-transform.
+
+    Returns True on success, False if skipped or failed.
+    """
+    tmp_path = glb_path.with_suffix(".opt.glb")
+    if _run_gltf_transform(["optimize", str(glb_path), str(tmp_path)], glb_path):
+        if _run_gltf_transform(["draco", str(tmp_path), str(glb_path)], glb_path):
+            tmp_path.unlink(missing_ok=True)
+            logger.info("Optimized %s (now %d bytes)", glb_path, glb_path.stat().st_size)
+            return True
+        else:
+            # optimize succeeded but draco failed; keep optimized version
+            tmp_path.rename(glb_path)
+            return True
+    tmp_path.unlink(missing_ok=True)
+    return False
 
 
 # ── PipelineResult ─────────────────────────────────────────
@@ -1097,6 +1203,7 @@ class ImageGenPipeline:
                     rigged_bytes = meshy.download_rigged_model(rig_task, fmt="glb")
                     rigged_path.write_bytes(rigged_bytes)
                     result.rigged_model_path = rigged_path
+                    optimize_glb(rigged_path)
                     logger.info("Rigged model saved: %s", rigged_path)
 
                     # Download built-in walking/running animations
@@ -1104,6 +1211,7 @@ class ImageGenPipeline:
                     for anim_name, anim_bytes in basic_anims.items():
                         anim_path = self._assets_dir / f"anim_{anim_name}.glb"
                         anim_path.write_bytes(anim_bytes)
+                        strip_mesh_from_glb(anim_path)
                         result.animation_paths[anim_name] = anim_path
                         logger.info(
                             "Animation '%s' saved: %s (%d bytes)",
@@ -1145,6 +1253,7 @@ class ImageGenPipeline:
                         anim_task = meshy.poll_animation_task(anim_task_id)
                         anim_bytes = meshy.download_animation(anim_task, fmt="glb")
                         anim_path.write_bytes(anim_bytes)
+                        strip_mesh_from_glb(anim_path)
                         result.animation_paths[anim_name] = anim_path
                         logger.info(
                             "Animation '%s' saved: %s (%d bytes)",
