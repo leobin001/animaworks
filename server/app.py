@@ -34,6 +34,11 @@ async def lifespan(app: FastAPI):
         def _on_person_added(name: str) -> None:
             if name not in app.state.person_names:
                 app.state.person_names.append(name)
+                # Register person in config.json (including supervisor field)
+                from core.config import register_person_in_config
+                from core.paths import get_data_dir
+
+                register_person_in_config(get_data_dir(), name)
                 logger.info("Person added via reconciliation: %s", name)
 
         def _on_person_removed(name: str) -> None:

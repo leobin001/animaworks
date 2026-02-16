@@ -171,7 +171,18 @@ def create_setup_router() -> APIRouter:
 
             try:
                 create_blank(persons_dir, person_name)
-                config.persons[person_name] = PersonModelConfig()
+                # Read supervisor from status.json if present
+                from core.config import read_person_supervisor
+
+                person_dir = persons_dir / person_name
+                supervisor = (
+                    read_person_supervisor(person_dir)
+                    if person_dir.exists()
+                    else None
+                )
+                config.persons[person_name] = PersonModelConfig(
+                    supervisor=supervisor,
+                )
                 logger.info("Created person '%s' during setup", person_name)
             except FileExistsError:
                 logger.warning("Person '%s' already exists, skipping creation", person_name)
