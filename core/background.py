@@ -82,7 +82,13 @@ OnTaskCompleteFn = Callable[[BackgroundTask], Awaitable[None]]
 # ── Default eligible tools ───────────────────────────────────
 
 _DEFAULT_ELIGIBLE_TOOLS: dict[str, int] = {
-    "image_generation": 30,
+    "generate_character_assets": 30,
+    "generate_fullbody": 30,
+    "generate_bustup": 30,
+    "generate_chibi": 30,
+    "generate_3d_model": 30,
+    "generate_rigged_model": 30,
+    "generate_animations": 30,
     "local_llm": 60,
     "run_command": 60,
 }
@@ -99,8 +105,8 @@ class BackgroundTaskManager:
         mgr = BackgroundTaskManager(person_dir, person_name="sakura")
         mgr.on_complete = my_notify_callback
 
-        if mgr.is_eligible("image_generation"):
-            task_id = mgr.submit("image_generation", args, execute_fn)
+        if mgr.is_eligible("generate_character_assets"):
+            task_id = mgr.submit("generate_character_assets", args, execute_fn)
             # Returns immediately; execute_fn runs in background.
     """
 

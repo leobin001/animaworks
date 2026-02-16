@@ -187,7 +187,10 @@ class LiteLLMExecutor(BaseExecutor):
 
     # Tools that use the dedicated background thread pool.
     _BG_POOL_TOOLS = frozenset({
-        "image_generation", "local_llm", "run_command",
+        "generate_character_assets",
+        "generate_fullbody", "generate_bustup", "generate_chibi",
+        "generate_3d_model", "generate_rigged_model", "generate_animations",
+        "local_llm", "run_command",
     })
 
     async def _execute_tool_call(self, tc, fn_args: dict[str, Any]) -> dict[str, Any]:

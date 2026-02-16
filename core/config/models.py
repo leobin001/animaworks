@@ -187,7 +187,13 @@ class BackgroundTaskConfig(BaseModel):
 
     enabled: bool = True
     eligible_tools: dict[str, BackgroundToolConfig] = {
-        "image_generation": BackgroundToolConfig(threshold_s=30),
+        "generate_character_assets": BackgroundToolConfig(threshold_s=30),
+        "generate_fullbody": BackgroundToolConfig(threshold_s=30),
+        "generate_bustup": BackgroundToolConfig(threshold_s=30),
+        "generate_chibi": BackgroundToolConfig(threshold_s=30),
+        "generate_3d_model": BackgroundToolConfig(threshold_s=30),
+        "generate_rigged_model": BackgroundToolConfig(threshold_s=30),
+        "generate_animations": BackgroundToolConfig(threshold_s=30),
         "local_llm": BackgroundToolConfig(threshold_s=60),
         "run_command": BackgroundToolConfig(threshold_s=60),
     }

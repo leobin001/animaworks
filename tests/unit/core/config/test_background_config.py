@@ -50,16 +50,26 @@ class TestBackgroundTaskConfig:
         assert isinstance(btc.eligible_tools, dict)
 
     def test_background_task_config_eligible_tools(self):
-        """Eligible tools include image_generation, local_llm, run_command."""
+        """Eligible tools include image_gen schema names, local_llm, run_command."""
         btc = BackgroundTaskConfig()
-        assert "image_generation" in btc.eligible_tools
+
+        # Image gen schema names (all threshold 30)
+        for name in (
+            "generate_character_assets", "generate_fullbody", "generate_bustup",
+            "generate_chibi", "generate_3d_model", "generate_rigged_model",
+            "generate_animations",
+        ):
+            assert name in btc.eligible_tools, f"{name} missing"
+            assert btc.eligible_tools[name].threshold_s == 30
+
+        # Other background tools
         assert "local_llm" in btc.eligible_tools
         assert "run_command" in btc.eligible_tools
-
-        # Verify threshold values
-        assert btc.eligible_tools["image_generation"].threshold_s == 30
         assert btc.eligible_tools["local_llm"].threshold_s == 60
         assert btc.eligible_tools["run_command"].threshold_s == 60
+
+        # Old category name must NOT be present
+        assert "image_generation" not in btc.eligible_tools
 
     def test_background_tool_config_defaults(self):
         """BackgroundToolConfig has a default threshold_s."""
@@ -114,5 +124,5 @@ class TestAnimaWorksConfigBackground:
         assert restored.server.ipc_stream_timeout == 600
 
         # Verify default eligible tools survived round-trip
-        assert "image_generation" in restored.background_task.eligible_tools
-        assert restored.background_task.eligible_tools["image_generation"].threshold_s == 30
+        assert "generate_character_assets" in restored.background_task.eligible_tools
+        assert restored.background_task.eligible_tools["generate_character_assets"].threshold_s == 30

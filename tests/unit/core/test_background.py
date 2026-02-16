@@ -37,8 +37,14 @@ def manager(person_dir: Path) -> BackgroundTaskManager:
 
 class TestEligibility:
     def test_is_eligible_default_tools(self, manager: BackgroundTaskManager):
-        """Default eligible tools include image_generation, local_llm, run_command."""
-        assert manager.is_eligible("image_generation") is True
+        """Default eligible tools include image_gen schema names, local_llm, run_command."""
+        assert manager.is_eligible("generate_character_assets") is True
+        assert manager.is_eligible("generate_fullbody") is True
+        assert manager.is_eligible("generate_bustup") is True
+        assert manager.is_eligible("generate_chibi") is True
+        assert manager.is_eligible("generate_3d_model") is True
+        assert manager.is_eligible("generate_rigged_model") is True
+        assert manager.is_eligible("generate_animations") is True
         assert manager.is_eligible("local_llm") is True
         assert manager.is_eligible("run_command") is True
 
@@ -51,13 +57,14 @@ class TestEligibility:
         assert mgr.is_eligible("my_tool") is True
         assert mgr.is_eligible("another_tool") is True
         # Default tools should NOT be eligible when custom set is provided
-        assert mgr.is_eligible("image_generation") is False
+        assert mgr.is_eligible("generate_character_assets") is False
 
     def test_is_not_eligible(self, manager: BackgroundTaskManager):
         """Tools not in the eligible set return False."""
         assert manager.is_eligible("send_message") is False
         assert manager.is_eligible("search_memory") is False
         assert manager.is_eligible("nonexistent_tool") is False
+        assert manager.is_eligible("image_generation") is False
 
 
 # ── Submit ───────────────────────────────────────────────────
@@ -429,12 +436,23 @@ class TestBackgroundTaskModel:
 class TestDefaultEligibleTools:
     def test_default_tools_content(self):
         """_DEFAULT_ELIGIBLE_TOOLS contains expected tools with timeouts."""
-        assert "image_generation" in _DEFAULT_ELIGIBLE_TOOLS
+        # Image gen schema names (all threshold 30)
+        for name in (
+            "generate_character_assets", "generate_fullbody", "generate_bustup",
+            "generate_chibi", "generate_3d_model", "generate_rigged_model",
+            "generate_animations",
+        ):
+            assert name in _DEFAULT_ELIGIBLE_TOOLS, f"{name} missing"
+            assert _DEFAULT_ELIGIBLE_TOOLS[name] == 30
+
+        # Other background tools
         assert "local_llm" in _DEFAULT_ELIGIBLE_TOOLS
         assert "run_command" in _DEFAULT_ELIGIBLE_TOOLS
-        assert _DEFAULT_ELIGIBLE_TOOLS["image_generation"] == 30
         assert _DEFAULT_ELIGIBLE_TOOLS["local_llm"] == 60
         assert _DEFAULT_ELIGIBLE_TOOLS["run_command"] == 60
+
+        # Old category name must NOT be present
+        assert "image_generation" not in _DEFAULT_ELIGIBLE_TOOLS
 
 
 # ── SubmitAsync ─────────────────────────────────────────────

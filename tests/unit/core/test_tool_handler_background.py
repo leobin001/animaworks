@@ -65,7 +65,7 @@ class TestHandleBackgroundExecution:
         handler._external = MagicMock()
         handler._external.dispatch.return_value = "direct result"
 
-        result = handler.handle("image_generation", {"prompt": "cat"})
+        result = handler.handle("generate_character_assets", {"prompt": "cat"})
         parsed = json.loads(result)
 
         assert parsed["status"] == "background"
@@ -121,7 +121,7 @@ class TestHandleBackgroundExecution:
         handler._external.dispatch.return_value = "sync result"
 
         # Even an eligible tool should go through normal dispatch
-        result = handler.handle("image_generation", {"prompt": "cat"})
+        result = handler.handle("generate_character_assets", {"prompt": "cat"})
         assert result == "sync result"
         handler._external.dispatch.assert_called_once()
 
@@ -141,7 +141,7 @@ class TestHandleBackgroundExecution:
         )
         handler._external = MagicMock()
 
-        handler.handle("image_generation", {"prompt": "cat"})
+        handler.handle("generate_character_assets", {"prompt": "cat"})
 
         # Verify the task was submitted with person_dir in args
         task = background_manager.list_tasks()[0]
@@ -165,7 +165,7 @@ class TestHandleBackgroundExecution:
         )
         handler._external = MagicMock()
 
-        result1 = handler.handle("image_generation", {"prompt": "cat"})
+        result1 = handler.handle("generate_character_assets", {"prompt": "cat"})
         result2 = handler.handle("local_llm", {"query": "hello"})
         result3 = handler.handle("run_command", {"cmd": "ls"})
 

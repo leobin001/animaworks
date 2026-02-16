@@ -451,3 +451,30 @@ class TestSessionChainingExecutionMode:
             assert kwargs.get("execution_mode") == "a2", (
                 f"Expected execution_mode='a2', got {kwargs.get('execution_mode')!r}"
             )
+
+
+# ── _BG_POOL_TOOLS ──────────────────────────────────────────
+
+
+class TestBgPoolTools:
+    def test_contains_image_gen_schema_names(self):
+        """_BG_POOL_TOOLS includes all image_gen tool schema names."""
+        from core.execution.litellm_loop import LiteLLMExecutor
+        expected_image_tools = {
+            "generate_character_assets",
+            "generate_fullbody", "generate_bustup", "generate_chibi",
+            "generate_3d_model", "generate_rigged_model", "generate_animations",
+        }
+        for tool in expected_image_tools:
+            assert tool in LiteLLMExecutor._BG_POOL_TOOLS, f"{tool} missing from _BG_POOL_TOOLS"
+
+    def test_contains_other_bg_tools(self):
+        """_BG_POOL_TOOLS includes local_llm and run_command."""
+        from core.execution.litellm_loop import LiteLLMExecutor
+        assert "local_llm" in LiteLLMExecutor._BG_POOL_TOOLS
+        assert "run_command" in LiteLLMExecutor._BG_POOL_TOOLS
+
+    def test_does_not_contain_category_names(self):
+        """_BG_POOL_TOOLS must NOT contain old category name 'image_generation'."""
+        from core.execution.litellm_loop import LiteLLMExecutor
+        assert "image_generation" not in LiteLLMExecutor._BG_POOL_TOOLS
