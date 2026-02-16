@@ -206,8 +206,8 @@ class TestRegisterPersonInConfig:
         )
 
         with (
-            patch("core.config.load_config") as mock_load,
-            patch("core.config.save_config") as mock_save,
+            patch("core.config.models.load_config") as mock_load,
+            patch("core.config.models.save_config") as mock_save,
         ):
             mock_config = MagicMock()
             mock_config.persons = {}

@@ -17,6 +17,7 @@ import fnmatch
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -529,3 +530,117 @@ def resolve_execution_mode(
         return result
 
     return "B"  # unknown model → safe side
+
+
+# ---------------------------------------------------------------------------
+# Person registration helpers
+# ---------------------------------------------------------------------------
+
+
+_NONE_SUPERVISOR_VALUES = frozenset({"なし", "(なし)", "（なし）", "-", "---", ""})
+
+_PAREN_EN_NAME_RE = re.compile(r"[（(]([A-Za-z_][A-Za-z0-9_]*)[）)]")
+
+
+def _resolve_supervisor_name(raw: str) -> str | None:
+    """Resolve a raw supervisor value to a person name.
+
+    Handles formats like ``"琴葉（kotoha）"`` → ``"kotoha"``,
+    ``"sakura"`` → ``"sakura"``, ``"(なし)"`` → ``None``.
+    """
+    raw = raw.strip()
+    if not raw or raw in _NONE_SUPERVISOR_VALUES:
+        return None
+
+    # Extract English name from parentheses (full-width or half-width)
+    m = _PAREN_EN_NAME_RE.search(raw)
+    if m:
+        return m.group(1).lower()
+
+    # Plain ASCII name
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", raw):
+        return raw.lower()
+
+    # Non-ASCII without English equivalent — cannot resolve to a person name
+    logger.warning(
+        "Supervisor value '%s' has no English name in parentheses; ignoring",
+        raw,
+    )
+    return None
+
+
+def read_person_supervisor(person_dir: Path) -> str | None:
+    """Read the supervisor field for a person from status.json or identity.md.
+
+    Tries two sources in order:
+      1. ``status.json`` — looks for ``"supervisor"`` key.
+      2. ``identity.md`` — parses the Japanese table format ``| 上司 | name |``.
+
+    The raw value is resolved to an English person name (e.g.
+    ``"琴葉（kotoha）"`` → ``"kotoha"``).
+
+    Args:
+        person_dir: Path to the person's runtime directory
+            (e.g. ``~/.animaworks/persons/hinata``).
+
+    Returns:
+        The supervisor person name if found, otherwise ``None``.
+    """
+    # Source 1: status.json
+    status_path = person_dir / "status.json"
+    if status_path.is_file():
+        try:
+            data = json.loads(status_path.read_text(encoding="utf-8"))
+            raw = data.get("supervisor", "")
+            if raw:
+                resolved = _resolve_supervisor_name(raw)
+                if resolved:
+                    return resolved
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to read %s: %s", status_path, exc)
+
+    # Source 2: identity.md table row  | 上司 | name |
+    identity_path = person_dir / "identity.md"
+    if identity_path.is_file():
+        try:
+            content = identity_path.read_text(encoding="utf-8")
+            m = re.search(r"\|\s*上司\s*\|\s*(.+?)\s*\|", content)
+            if m:
+                resolved = _resolve_supervisor_name(m.group(1))
+                if resolved:
+                    return resolved
+        except OSError as exc:
+            logger.warning("Failed to read %s: %s", identity_path, exc)
+
+    return None
+
+
+def register_person_in_config(
+    data_dir: Path,
+    person_name: str,
+) -> None:
+    """Register a newly created person in config.json with supervisor synced.
+
+    Reads status.json / identity.md in the person directory to extract the
+    ``supervisor`` field and stores it in the :class:`PersonModelConfig` entry
+    inside config.json.  If the person already exists in the config the call
+    is a no-op.
+
+    Args:
+        data_dir: The AnimaWorks data directory (e.g. ``~/.animaworks``).
+        person_name: Name of the person to register.
+    """
+    config_path = data_dir / "config.json"
+    if not config_path.exists():
+        return
+    config = load_config(config_path)
+    if person_name not in config.persons:
+        person_dir = data_dir / "persons" / person_name
+        supervisor = read_person_supervisor(person_dir) if person_dir.exists() else None
+        config.persons[person_name] = PersonModelConfig(supervisor=supervisor)
+        save_config(config, config_path)
+        logger.debug(
+            "Registered person '%s' in config (supervisor=%s)",
+            person_name,
+            supervisor,
+        )

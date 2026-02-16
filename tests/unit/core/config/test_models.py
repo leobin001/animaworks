@@ -22,6 +22,8 @@ from core.config.models import (
     invalidate_cache,
     load_config,
     load_model_config,
+    read_person_supervisor,
+    register_person_in_config,
     resolve_execution_mode,
     resolve_person_config,
     save_config,
@@ -518,3 +520,162 @@ class TestLoadModelConfig:
         mc = load_model_config(person_dir)
         assert mc.api_key == "sk-openai"
         assert mc.api_base_url == "https://api.openai.com"
+
+
+# ── read_person_supervisor ────────────────────────────────
+
+
+class TestReadPersonSupervisor:
+    """Tests for read_person_supervisor helper."""
+
+    def test_from_status_json(self, tmp_path: Path) -> None:
+        """Reads supervisor from status.json."""
+        person_dir = tmp_path / "alice"
+        person_dir.mkdir()
+        (person_dir / "status.json").write_text(
+            json.dumps({"supervisor": "bob"}), encoding="utf-8",
+        )
+        assert read_person_supervisor(person_dir) == "bob"
+
+    def test_from_identity_md(self, tmp_path: Path) -> None:
+        """Falls back to identity.md table when no status.json."""
+        person_dir = tmp_path / "alice"
+        person_dir.mkdir()
+        (person_dir / "identity.md").write_text(
+            "| 上司 | charlie |\n", encoding="utf-8",
+        )
+        assert read_person_supervisor(person_dir) == "charlie"
+
+    def test_status_json_takes_priority(self, tmp_path: Path) -> None:
+        """status.json supervisor wins over identity.md."""
+        person_dir = tmp_path / "alice"
+        person_dir.mkdir()
+        (person_dir / "status.json").write_text(
+            json.dumps({"supervisor": "bob"}), encoding="utf-8",
+        )
+        (person_dir / "identity.md").write_text(
+            "| 上司 | charlie |\n", encoding="utf-8",
+        )
+        assert read_person_supervisor(person_dir) == "bob"
+
+    def test_nashi_returns_none(self, tmp_path: Path) -> None:
+        """Supervisor value 'なし' is treated as no supervisor."""
+        person_dir = tmp_path / "alice"
+        person_dir.mkdir()
+        (person_dir / "status.json").write_text(
+            json.dumps({"supervisor": "なし"}), encoding="utf-8",
+        )
+        assert read_person_supervisor(person_dir) is None
+
+    def test_empty_dir_returns_none(self, tmp_path: Path) -> None:
+        """Returns None when person dir has no status.json or identity.md."""
+        person_dir = tmp_path / "alice"
+        person_dir.mkdir()
+        assert read_person_supervisor(person_dir) is None
+
+    def test_japanese_name_with_parens(self, tmp_path: Path) -> None:
+        """Japanese name with parenthesised English name is resolved."""
+        person_dir = tmp_path / "hinata"
+        person_dir.mkdir()
+        (person_dir / "identity.md").write_text(
+            "| 上司 | 琴葉（kotoha） |\n", encoding="utf-8",
+        )
+        assert read_person_supervisor(person_dir) == "kotoha"
+
+    def test_invalid_json_falls_back(self, tmp_path: Path) -> None:
+        """Falls back to identity.md when status.json is invalid JSON."""
+        person_dir = tmp_path / "alice"
+        person_dir.mkdir()
+        (person_dir / "status.json").write_text("bad json", encoding="utf-8")
+        (person_dir / "identity.md").write_text(
+            "| 上司 | bob |\n", encoding="utf-8",
+        )
+        assert read_person_supervisor(person_dir) == "bob"
+
+    def test_empty_supervisor_in_status(self, tmp_path: Path) -> None:
+        """Empty supervisor in status.json falls back to identity.md."""
+        person_dir = tmp_path / "alice"
+        person_dir.mkdir()
+        (person_dir / "status.json").write_text(
+            json.dumps({"supervisor": ""}), encoding="utf-8",
+        )
+        (person_dir / "identity.md").write_text(
+            "| 上司 | bob |\n", encoding="utf-8",
+        )
+        assert read_person_supervisor(person_dir) == "bob"
+
+
+# ── register_person_in_config ─────────────────────────────
+
+
+class TestRegisterPersonInConfig:
+    """Tests for register_person_in_config helper."""
+
+    @pytest.fixture(autouse=True)
+    def _clear(self):
+        invalidate_cache()
+        yield
+        invalidate_cache()
+
+    def test_registers_new_person_with_supervisor(self, tmp_path: Path) -> None:
+        """New person is added to config.json with supervisor from status.json."""
+        data_dir = tmp_path
+        config_path = data_dir / "config.json"
+        save_config(AnimaWorksConfig(), config_path)
+        invalidate_cache()
+
+        person_dir = data_dir / "persons" / "alice"
+        person_dir.mkdir(parents=True)
+        (person_dir / "status.json").write_text(
+            json.dumps({"supervisor": "bob"}), encoding="utf-8",
+        )
+
+        register_person_in_config(data_dir, "alice")
+
+        invalidate_cache()
+        cfg = load_config(config_path)
+        assert "alice" in cfg.persons
+        assert cfg.persons["alice"].supervisor == "bob"
+
+    def test_does_not_overwrite_existing(self, tmp_path: Path) -> None:
+        """Existing person entry is not overwritten."""
+        data_dir = tmp_path
+        config_path = data_dir / "config.json"
+        cfg = AnimaWorksConfig()
+        cfg.persons["alice"] = PersonModelConfig(
+            model="openai/gpt-4o", supervisor="charlie",
+        )
+        save_config(cfg, config_path)
+        invalidate_cache()
+
+        person_dir = data_dir / "persons" / "alice"
+        person_dir.mkdir(parents=True)
+        (person_dir / "status.json").write_text(
+            json.dumps({"supervisor": "bob"}), encoding="utf-8",
+        )
+
+        register_person_in_config(data_dir, "alice")
+
+        invalidate_cache()
+        cfg = load_config(config_path)
+        assert cfg.persons["alice"].supervisor == "charlie"  # unchanged
+        assert cfg.persons["alice"].model == "openai/gpt-4o"  # unchanged
+
+    def test_no_config_file_noop(self, tmp_path: Path) -> None:
+        """Does nothing when config.json does not exist."""
+        register_person_in_config(tmp_path, "alice")
+        # Should not raise
+
+    def test_no_person_dir_registers_none_supervisor(self, tmp_path: Path) -> None:
+        """Person dir doesn't exist — registers with supervisor=None."""
+        data_dir = tmp_path
+        config_path = data_dir / "config.json"
+        save_config(AnimaWorksConfig(), config_path)
+        invalidate_cache()
+
+        register_person_in_config(data_dir, "alice")
+
+        invalidate_cache()
+        cfg = load_config(config_path)
+        assert "alice" in cfg.persons
+        assert cfg.persons["alice"].supervisor is None

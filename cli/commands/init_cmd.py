@@ -283,13 +283,11 @@ def cmd_reset(args: argparse.Namespace) -> None:
 
 
 def _register_person_in_config(data_dir, person_name: str) -> None:
-    """Register a newly created person in config.json."""
-    from core.config import PersonModelConfig, load_config, save_config
+    """Register a newly created person in config.json.
 
-    config_path = data_dir / "config.json"
-    if not config_path.exists():
-        return
-    config = load_config(config_path)
-    if person_name not in config.persons:
-        config.persons[person_name] = PersonModelConfig()
-        save_config(config, config_path)
+    Delegates to :func:`core.config.register_person_in_config` which
+    reads status.json / identity.md to sync the supervisor field.
+    """
+    from core.config import register_person_in_config
+
+    register_person_in_config(data_dir, person_name)

@@ -13,6 +13,8 @@ from core.config.models import (
     get_config_path,
     invalidate_cache,
     load_config,
+    read_person_supervisor,
+    register_person_in_config,
     resolve_execution_mode,
     resolve_person_config,
     save_config,

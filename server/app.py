@@ -34,6 +34,10 @@ async def lifespan(app: FastAPI):
         def _on_person_added(name: str) -> None:
             if name not in app.state.person_names:
                 app.state.person_names.append(name)
+                # Sync full org structure (registers new person + repairs others)
+                from core.org_sync import sync_org_structure
+
+                sync_org_structure(app.state.persons_dir)
                 logger.info("Person added via reconciliation: %s", name)
 
         def _on_person_removed(name: str) -> None:
@@ -45,6 +49,15 @@ async def lifespan(app: FastAPI):
         app.state.supervisor.on_person_removed = _on_person_removed
 
         await app.state.supervisor.start_all(app.state.person_names)
+
+        # Sync org structure from identity.md/status.json → config.json
+        try:
+            from core.org_sync import sync_org_structure
+
+            sync_org_structure(app.state.persons_dir)
+        except Exception:
+            logger.exception("Org structure sync failed at startup")
+
         logger.info("Server started with process isolation")
     else:
         logger.info("Server started in setup mode (setup not yet complete)")
