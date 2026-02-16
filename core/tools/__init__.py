@@ -92,7 +92,7 @@ def cli_dispatch():
 
     Supports core tools (from ``TOOL_MODULES``), common tools
     (from ``common_tools/``), and personal tools discovered via
-    the ``ANIMAWORKS_PERSON_DIR`` environment variable.
+    the ``ANIMAWORKS_ANIMA_DIR`` environment variable.
     """
     import os
 
@@ -100,7 +100,7 @@ def cli_dispatch():
     common = discover_common_tools()
 
     # Discover personal tools if anima_dir is set
-    anima_dir_str = os.environ.get("ANIMAWORKS_PERSON_DIR", "")
+    anima_dir_str = os.environ.get("ANIMAWORKS_ANIMA_DIR", "")
     personal: dict[str, str] = {}
     if anima_dir_str:
         personal = discover_personal_tools(Path(anima_dir_str))

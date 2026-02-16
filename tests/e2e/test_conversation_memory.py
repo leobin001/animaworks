@@ -35,14 +35,14 @@ class TestConversationMemory:
         extract_resp1 = make_litellm_response(content="なし")
 
         with patch_litellm(main_resp1, extract_resp1):
-            await anima.process_message("Hi there", from_person="human")
+            await dp.process_message("Hi there", from_person="human")
 
         # Second message
         main_resp2 = make_litellm_response(content="I'm doing great, thanks!")
         extract_resp2 = make_litellm_response(content="なし")
 
         with patch_litellm(main_resp2, extract_resp2):
-            await anima.process_message("How are you?", from_person="human")
+            await dp.process_message("How are you?", from_person="human")
 
         # Verify conversation.json
         conv_path = dp.anima_dir / "state" / "conversation.json"

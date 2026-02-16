@@ -64,7 +64,7 @@ class TestAnimaRunnerSchedulerE2E:
         )
 
         # Create a mock DigitalAnima that uses real memory for config reading
-        mock_anima_mock = MagicMock()
+        mock_anima = MagicMock()
         mock_anima.name = "test-anima"
 
         # Use real file reading for config
@@ -113,7 +113,7 @@ class TestAnimaRunnerSchedulerE2E:
             shared_dir=shared_dir,
         )
 
-        mock_anima_mock = MagicMock()
+        mock_anima = MagicMock()
         mock_anima.name = "test-anima"
         mock_anima.memory.read_heartbeat_config.return_value = (
             anima_dir / "heartbeat.md"

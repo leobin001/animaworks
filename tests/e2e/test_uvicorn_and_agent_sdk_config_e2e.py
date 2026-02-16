@@ -93,7 +93,7 @@ class TestAgentSDKEnvE2E:
             executor = AgentSDKExecutor(model_config=config, anima_dir=anima_dir)
             env = executor._build_env()
 
-        assert env["ANIMAWORKS_PERSON_DIR"] == str(anima_dir)
+        assert env["ANIMAWORKS_ANIMA_DIR"] == str(anima_dir)
         assert env["ANTHROPIC_API_KEY"] == "sk-test-key"
         assert env["ANTHROPIC_BASE_URL"] == "https://custom.api"
         assert env["CLAUDE_CODE_DISABLE_SKILL_IMPROVEMENT"] == "true"

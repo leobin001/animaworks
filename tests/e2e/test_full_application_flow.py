@@ -747,7 +747,7 @@ async def test_system_cron_integration(tmp_path: Path, mock_llm, mock_websocket)
             lifecycle.set_broadcast(mock_websocket)
 
         # Register anima
-        lifecycle.register_anima(dp)
+        lifecycle.register_anima(anima)
 
         # Setup system crons
         lifecycle._setup_system_crons()
@@ -1135,7 +1135,7 @@ async def test_lifecycle_anima_registration(tmp_path: Path):
         lifecycle = LifecycleManager()
 
         # Register anima
-        lifecycle.register_anima(dp)
+        lifecycle.register_anima(anima)
         assert "test_anima" in lifecycle.animas
 
         # Verify heartbeat job was created

@@ -420,7 +420,7 @@ class ToolHandler:
     # ── Admin tool handlers ────────────────────────────────
 
     def _handle_create_anima(self, args: dict[str, Any]) -> str:
-        """Create a new anima from a character sheet vian anima_factory."""
+        """Create a new anima from a character sheet via anima_factory."""
         from core.anima_factory import create_from_md
         from core.paths import get_data_dir, get_animas_dir
 

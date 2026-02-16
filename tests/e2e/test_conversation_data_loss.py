@@ -73,7 +73,7 @@ def _make_anima_with_mocks(anima_dir: Path, shared_dir: Path):
 
         anima = DigitalAnima(anima_dir, shared_dir)
 
-    return dp
+    return anima
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ class TestConversationDataLossProtection:
         )
 
         with pytest.raises(RuntimeError, match="LLM unavailable"):
-            await anima.process_message("test message")
+            await dp.process_message("test message")
 
         turns = _read_conversation(anima_dir)
 
@@ -135,7 +135,7 @@ class TestConversationDataLossProtection:
             ),
         )
 
-        result = await anima.process_message("hello")
+        result = await dp.process_message("hello")
         assert result == "Hello! Nice to meet you."
 
         turns = _read_conversation(anima_dir)
@@ -165,7 +165,7 @@ class TestConversationDataLossProtection:
 
         # Consume the generator — it should yield an error event
         chunks = []
-        async for chunk in anima.process_message_stream("stream test"):
+        async for chunk in dp.process_message_stream("stream test"):
             chunks.append(chunk)
 
         # The last yielded chunk should be the error event
@@ -227,7 +227,7 @@ class TestConversationDataLossProtection:
         )
 
         with pytest.raises(RuntimeError, match="Transcript test error"):
-            await anima.process_message("transcript input")
+            await dp.process_message("transcript input")
 
         entries = _read_transcript(anima_dir)
 

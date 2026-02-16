@@ -164,7 +164,7 @@ class AgentSDKExecutor(BaseExecutor):
     def _build_env(self) -> dict[str, str]:
         """Build env dict so the child process uses per-anima credentials.
 
-        Also sets ``ANIMAWORKS_PERSON_DIR`` so that ``animaworks-tool``
+        Also sets ``ANIMAWORKS_ANIMA_DIR`` so that ``animaworks-tool``
         can discover personal tools in the anima's ``tools/`` directory,
         and prepends ``anima_dir`` to ``PATH`` so the ``send`` script is
         discoverable via ``bash send``.
@@ -174,7 +174,7 @@ class AgentSDKExecutor(BaseExecutor):
         from core.paths import PROJECT_DIR
 
         env: dict[str, str] = {
-            "ANIMAWORKS_PERSON_DIR": str(self._anima_dir),
+            "ANIMAWORKS_ANIMA_DIR": str(self._anima_dir),
             "ANIMAWORKS_PROJECT_DIR": str(PROJECT_DIR),
             "PATH": f"{self._anima_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
             "CLAUDE_CODE_DISABLE_SKILL_IMPROVEMENT": "true",

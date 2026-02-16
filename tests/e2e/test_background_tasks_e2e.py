@@ -442,10 +442,10 @@ class TestBackgroundTaskWSNotification:
             from core.anima import DigitalAnima
 
             anima = DigitalAnima(anima_dir, shared_dir)
-            dp.set_ws_broadcast(mock_broadcast)
+            anima.set_ws_broadcast(mock_broadcast)
 
         # The on_complete callback should be wired
-        mgr = dp.agent.background_manager
+        mgr = anima.agent.background_manager
         assert mgr is not None
         assert mgr.on_complete is not None
 
@@ -503,9 +503,9 @@ class TestBackgroundTaskWSNotification:
             from core.anima import DigitalAnima
 
             anima = DigitalAnima(anima_dir, shared_dir)
-            dp.set_ws_broadcast(mock_broadcast)
+            anima.set_ws_broadcast(mock_broadcast)
 
-        mgr = dp.agent.background_manager
+        mgr = anima.agent.background_manager
         assert mgr is not None
 
         callback_done = asyncio.Event()

@@ -60,14 +60,14 @@ class TestBuildEnvPathAndProjectDir:
         assert env["ANIMAWORKS_PROJECT_DIR"] == str(PROJECT_DIR)
 
     def test_anima_dir_env_set(self, tmp_path: Path) -> None:
-        """ANIMAWORKS_PERSON_DIR should still be set."""
+        """ANIMAWORKS_ANIMA_DIR should still be set."""
         anima_dir = tmp_path / "animas" / "dave"
         anima_dir.mkdir(parents=True)
 
         executor = self._make_executor(anima_dir)
         env = executor._build_env()
 
-        assert env["ANIMAWORKS_PERSON_DIR"] == str(anima_dir)
+        assert env["ANIMAWORKS_ANIMA_DIR"] == str(anima_dir)
 
     def test_fallback_path_when_no_env(self, tmp_path: Path) -> None:
         """When PATH is not in os.environ, fall back to /usr/bin:/bin."""

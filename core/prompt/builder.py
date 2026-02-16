@@ -375,7 +375,7 @@ def build_system_prompt(
         if has_newstaff:
             parts.append(
                 "## 雇用ルール\n\n"
-                "新しいPersonを雇用する際は、必ず `create_anima` ツールを使用してください。\n"
+                "新しいAnimaを雇用する際は、必ず `create_anima` ツールを使用してください。\n"
                 "手動で identity.md 等のファイルを個別に作成してはいけません。\n"
                 "キャラクターシートを1ファイルで作成し、create_anima に渡してください。"
             )
