@@ -314,7 +314,10 @@ into NovelAI-compatible anime image generation tags.
 
 Rules:
 - Output ONLY a comma-separated tag string, nothing else.
-- Start with 1girl or 1boy.
+- Always begin with quality/style tags: \
+masterpiece, best quality, very aesthetic, absurdres, \
+anime coloring, clean lineart, soft shading
+- Then 1girl or 1boy.
 - Use plain English color names, NOT gemstone metaphors \
   (サファイアブルー → blue, エメラルドグリーン → green).
 - Decompose compound descriptions into atomic tags \
@@ -322,7 +325,7 @@ Rules:
 - Translate hair accessories (ピン → hair clip, リボン → hair ribbon).
 - Omit non-visual traits (personality, hobbies).
 - Height/weight: omit unless notably tall/short (use tall or petite).
-- Always end with: full body, standing, white background
+- Always end with: full body, standing, white background, looking at viewer
 - All tags lowercase, separated by comma + space.
 
 Example input:
@@ -332,8 +335,10 @@ Example input:
 顔タイプ: クール系
 
 Example output:
+masterpiece, best quality, very aesthetic, absurdres, \
+anime coloring, clean lineart, soft shading, \
 1girl, black hair, long hair, twintails, red eyes, cool expression, \
-full body, standing, white background"""
+full body, standing, white background, looking at viewer"""
 
 
 async def _synthesize_prompt_via_llm(
