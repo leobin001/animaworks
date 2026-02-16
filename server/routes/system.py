@@ -471,6 +471,12 @@ def create_system_router() -> APIRouter:
         if not isinstance(entries, list):
             return JSONResponse({"error": "Expected a JSON array"}, status_code=400)
 
+        if len(entries) > 500:
+            return JSONResponse(
+                {"error": f"Too many entries: {len(entries)}. Maximum is 500."},
+                status_code=400,
+            )
+
         fe_logger = _get_frontend_logger()
         for entry in entries:
             if isinstance(entry, dict):

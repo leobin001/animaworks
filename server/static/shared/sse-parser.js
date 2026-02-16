@@ -1,6 +1,10 @@
 // ── Shared SSE Parser ──────────────────────────────────
 // Common SSE parsing and error message utilities used across all chat modules.
 
+import { createLogger } from './logger.js';
+
+const logger = createLogger('sse-parser');
+
 /**
  * Parse SSE (Server-Sent Events) buffer into structured events.
  * Uses "\n\n" as the block delimiter (standard SSE format).
@@ -28,7 +32,7 @@ export function parseConvSSE(buffer) {
         parsed.push({ event: eventName, data: JSON.parse(dataLines.join("\n")) });
       } catch {
         const raw = dataLines.join("\n");
-        console.warn("[sse-parser] JSON parse failed for event '%s': %s", eventName, raw.slice(0, 100));
+        logger.warn(`JSON parse failed for event '${eventName}':`, raw.slice(0, 100));
       }
     }
   }
