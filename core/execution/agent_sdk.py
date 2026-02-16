@@ -50,6 +50,85 @@ _SEND_PATTERNS = [
     re.compile(r"Message sent to (\w+)"),                # ToolHandler: "Message sent to kotoha (...)"
 ]
 
+# ── A1 mode security ──────────────────────────────────────────
+
+# Files that persons cannot modify themselves (identity/privilege protection).
+_PROTECTED_FILES = frozenset({
+    "permissions.md",
+    "identity.md",
+    "bootstrap.md",
+})
+
+# Commands that can write files (checked for path traversal).
+_WRITE_COMMANDS = frozenset({
+    "cp", "mv", "tee", "dd", "install", "rsync",
+})
+
+
+def _check_a1_file_access(
+    file_path: str, person_dir: Path, *, write: bool,
+) -> str | None:
+    """Check if a file path is allowed for A1 mode tools.
+
+    Returns violation reason string if blocked, None if allowed.
+    """
+    if not file_path:
+        return None
+
+    resolved = Path(file_path).resolve()
+    person_resolved = person_dir.resolve()
+    persons_root = person_resolved.parent
+
+    # Block access to other persons' directories
+    if resolved.is_relative_to(persons_root):
+        if not resolved.is_relative_to(person_resolved):
+            return f"Access to other person's directory is not allowed: {file_path}"
+
+        # Block writes to protected files within own directory
+        if write:
+            rel = str(resolved.relative_to(person_resolved))
+            if rel in _PROTECTED_FILES:
+                return f"'{rel}' is a protected file and cannot be modified"
+
+    return None
+
+
+def _check_a1_bash_command(command: str, person_dir: Path) -> str | None:
+    """Check bash commands for obvious file operation violations.
+
+    This is a best-effort heuristic — not a complete sandbox.
+    """
+    import shlex
+
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return None
+
+    if not argv:
+        return None
+
+    cmd_base = Path(argv[0]).name
+
+    # Check file-writing commands for path violations
+    if cmd_base in _WRITE_COMMANDS:
+        persons_root = str(person_dir.parent.resolve())
+        person_resolved = str(person_dir.resolve())
+        for arg in argv[1:]:
+            if arg.startswith("-"):
+                continue
+            try:
+                resolved = str(Path(arg).resolve())
+                # Writing to other person's directory
+                if resolved.startswith(persons_root) and not resolved.startswith(
+                    person_resolved
+                ):
+                    return f"Command targets other person's directory: {arg}"
+            except (ValueError, OSError):
+                pass
+
+    return None
+
 
 class AgentSDKExecutor(BaseExecutor):
     """Execute via Claude Agent SDK (Mode A1).
@@ -147,6 +226,7 @@ class AgentSDKExecutor(BaseExecutor):
             HookContext,
             HookInput,
             PostToolUseHookSpecificOutput,
+            PreToolUseHookSpecificOutput,
             SyncHookJSONOutput,
         )
 
@@ -184,6 +264,59 @@ class AgentSDKExecutor(BaseExecutor):
                 )
             return SyncHookJSONOutput()
 
+        async def _pre_tool_hook(
+            input_data: HookInput,
+            tool_use_id: str | None,
+            context: HookContext,
+        ) -> SyncHookJSONOutput:
+            tool_name = input_data.get("tool_name", "")
+            tool_input = input_data.get("tool_input", {})
+
+            # Write / Edit: check file path
+            if tool_name in ("Write", "Edit"):
+                file_path = tool_input.get("file_path", "")
+                violation = _check_a1_file_access(
+                    file_path, self._person_dir, write=True,
+                )
+                if violation:
+                    return SyncHookJSONOutput(
+                        hookSpecificOutput=PreToolUseHookSpecificOutput(
+                            hookEventName="PreToolUse",
+                            permissionDecision="deny",
+                            permissionDecisionReason=violation,
+                        )
+                    )
+
+            # Read: check for path traversal to other persons
+            if tool_name == "Read":
+                file_path = tool_input.get("file_path", "")
+                violation = _check_a1_file_access(
+                    file_path, self._person_dir, write=False,
+                )
+                if violation:
+                    return SyncHookJSONOutput(
+                        hookSpecificOutput=PreToolUseHookSpecificOutput(
+                            hookEventName="PreToolUse",
+                            permissionDecision="deny",
+                            permissionDecisionReason=violation,
+                        )
+                    )
+
+            # Bash: inspect command for file operation patterns
+            if tool_name == "Bash":
+                command = tool_input.get("command", "")
+                violation = _check_a1_bash_command(command, self._person_dir)
+                if violation:
+                    return SyncHookJSONOutput(
+                        hookSpecificOutput=PreToolUseHookSpecificOutput(
+                            hookEventName="PreToolUse",
+                            permissionDecision="deny",
+                            permissionDecisionReason=violation,
+                        )
+                    )
+
+            return SyncHookJSONOutput()
+
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
@@ -193,6 +326,10 @@ class AgentSDKExecutor(BaseExecutor):
             model=self._resolve_agent_sdk_model(),
             env=self._build_env(),
             hooks={
+                "PreToolUse": [HookMatcher(
+                    matcher="Write|Edit|Bash|Read",
+                    hooks=[_pre_tool_hook],
+                )],
                 "PostToolUse": [HookMatcher(matcher=None, hooks=[_post_tool_hook])],
             },
         )
@@ -258,6 +395,7 @@ class AgentSDKExecutor(BaseExecutor):
             HookContext,
             HookInput,
             PostToolUseHookSpecificOutput,
+            PreToolUseHookSpecificOutput,
             StreamEvent,
             SyncHookJSONOutput,
         )
@@ -294,6 +432,59 @@ class AgentSDKExecutor(BaseExecutor):
                 )
             return SyncHookJSONOutput()
 
+        async def _pre_tool_hook(
+            input_data: HookInput,
+            tool_use_id: str | None,
+            context: HookContext,
+        ) -> SyncHookJSONOutput:
+            tool_name = input_data.get("tool_name", "")
+            tool_input = input_data.get("tool_input", {})
+
+            # Write / Edit: check file path
+            if tool_name in ("Write", "Edit"):
+                file_path = tool_input.get("file_path", "")
+                violation = _check_a1_file_access(
+                    file_path, self._person_dir, write=True,
+                )
+                if violation:
+                    return SyncHookJSONOutput(
+                        hookSpecificOutput=PreToolUseHookSpecificOutput(
+                            hookEventName="PreToolUse",
+                            permissionDecision="deny",
+                            permissionDecisionReason=violation,
+                        )
+                    )
+
+            # Read: check for path traversal to other persons
+            if tool_name == "Read":
+                file_path = tool_input.get("file_path", "")
+                violation = _check_a1_file_access(
+                    file_path, self._person_dir, write=False,
+                )
+                if violation:
+                    return SyncHookJSONOutput(
+                        hookSpecificOutput=PreToolUseHookSpecificOutput(
+                            hookEventName="PreToolUse",
+                            permissionDecision="deny",
+                            permissionDecisionReason=violation,
+                        )
+                    )
+
+            # Bash: inspect command for file operation patterns
+            if tool_name == "Bash":
+                command = tool_input.get("command", "")
+                violation = _check_a1_bash_command(command, self._person_dir)
+                if violation:
+                    return SyncHookJSONOutput(
+                        hookSpecificOutput=PreToolUseHookSpecificOutput(
+                            hookEventName="PreToolUse",
+                            permissionDecision="deny",
+                            permissionDecisionReason=violation,
+                        )
+                    )
+
+            return SyncHookJSONOutput()
+
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
@@ -304,6 +495,10 @@ class AgentSDKExecutor(BaseExecutor):
             env=self._build_env(),
             include_partial_messages=True,
             hooks={
+                "PreToolUse": [HookMatcher(
+                    matcher="Write|Edit|Bash|Read",
+                    hooks=[_pre_tool_hook],
+                )],
                 "PostToolUse": [HookMatcher(matcher=None, hooks=[_post_tool_hook])],
             },
         )

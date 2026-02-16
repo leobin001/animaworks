@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.tooling.handler import ToolHandler, _SHELL_METACHAR_RE, _error_result
+from core.tooling.handler import ToolHandler, _SHELL_METACHAR_RE, _error_result, _PROTECTED_FILES, _is_protected_write
 
 
 # ── Fixtures ──────────────────────────────────────────────────
@@ -672,3 +672,251 @@ class TestScheduleChangedCallback:
         # handler has no on_schedule_changed set (default None)
         result = handler.handle("write_memory_file", {"path": "heartbeat.md", "content": "cfg"})
         assert "Written to" in result
+
+
+# ── Memory write security ─────────────────────────────────────
+
+
+class TestMemoryWriteSecurity:
+    """Tests for protected file and path traversal checks in memory tools."""
+
+    @pytest.mark.parametrize("protected_file", [
+        "permissions.md",
+        "identity.md",
+        "bootstrap.md",
+    ])
+    def test_write_memory_file_blocked_for_protected(
+        self, handler: ToolHandler, protected_file: str,
+    ):
+        result = handler.handle(
+            "write_memory_file",
+            {"path": protected_file, "content": "malicious"},
+        )
+        parsed = json.loads(result)
+        assert parsed["error_type"] == "PermissionDenied"
+        assert "protected file" in parsed["message"]
+
+    def test_write_memory_file_allowed_for_non_protected(
+        self, handler: ToolHandler, person_dir: Path,
+    ):
+        result = handler.handle(
+            "write_memory_file",
+            {"path": "knowledge/safe.md", "content": "safe content"},
+        )
+        assert "Written to" in result
+        assert (person_dir / "knowledge" / "safe.md").read_text(encoding="utf-8") == "safe content"
+
+    def test_write_memory_file_path_traversal_blocked(
+        self, handler: ToolHandler, tmp_path: Path,
+    ):
+        # Create another person's directory
+        other = tmp_path / "persons" / "other-person" / "knowledge"
+        other.mkdir(parents=True)
+        result = handler.handle(
+            "write_memory_file",
+            {"path": "../other-person/knowledge/stolen.md", "content": "hacked"},
+        )
+        parsed = json.loads(result)
+        assert parsed["error_type"] == "PermissionDenied"
+        assert "outside person directory" in parsed["message"]
+        # Verify file was NOT created
+        assert not (other / "stolen.md").exists()
+
+    def test_read_memory_file_path_traversal_blocked(
+        self, handler: ToolHandler, tmp_path: Path,
+    ):
+        # Create another person's directory with a file
+        other = tmp_path / "persons" / "other-person"
+        other.mkdir(parents=True)
+        (other / "identity.md").write_text("secret identity", encoding="utf-8")
+        result = handler.handle(
+            "read_memory_file",
+            {"path": "../other-person/identity.md"},
+        )
+        parsed = json.loads(result)
+        assert parsed["error_type"] == "PermissionDenied"
+        assert "outside person directory" in parsed["message"]
+
+    def test_read_memory_file_normal_access_allowed(
+        self, handler: ToolHandler, person_dir: Path,
+    ):
+        (person_dir / "episodes").mkdir(exist_ok=True)
+        (person_dir / "episodes" / "2026-02-15.md").write_text("daily log", encoding="utf-8")
+        result = handler.handle(
+            "read_memory_file",
+            {"path": "episodes/2026-02-15.md"},
+        )
+        assert result == "daily log"
+
+    def test_write_memory_file_heartbeat_still_allowed(
+        self, handler: ToolHandler, person_dir: Path,
+    ):
+        """heartbeat.md is NOT in the protected list."""
+        result = handler.handle(
+            "write_memory_file",
+            {"path": "heartbeat.md", "content": "new heartbeat config"},
+        )
+        assert "Written to" in result
+
+    def test_write_memory_file_cron_still_allowed(
+        self, handler: ToolHandler, person_dir: Path,
+    ):
+        """cron.md is NOT in the protected list."""
+        result = handler.handle(
+            "write_memory_file",
+            {"path": "cron.md", "content": "new cron config"},
+        )
+        assert "Written to" in result
+
+
+# ── File permission write protection ─────────────────────────
+
+
+class TestFilePermissionWriteProtection:
+    """Tests for _check_file_permission with write=True."""
+
+    def test_write_to_own_permissions_md_blocked(
+        self, handler: ToolHandler, person_dir: Path,
+    ):
+        result = handler._check_file_permission(
+            str(person_dir / "permissions.md"), write=True,
+        )
+        assert result is not None
+        parsed = json.loads(result)
+        assert parsed["error_type"] == "PermissionDenied"
+        assert "protected file" in parsed["message"]
+
+    def test_write_to_own_identity_md_blocked(
+        self, handler: ToolHandler, person_dir: Path,
+    ):
+        result = handler._check_file_permission(
+            str(person_dir / "identity.md"), write=True,
+        )
+        assert result is not None
+        parsed = json.loads(result)
+        assert parsed["error_type"] == "PermissionDenied"
+
+    def test_read_permissions_md_allowed(
+        self, handler: ToolHandler, person_dir: Path,
+    ):
+        """Reading protected files is allowed (write=False)."""
+        result = handler._check_file_permission(
+            str(person_dir / "permissions.md"), write=False,
+        )
+        assert result is None
+
+    def test_read_permissions_md_allowed_default(
+        self, handler: ToolHandler, person_dir: Path,
+    ):
+        """Default write=False should allow reading."""
+        result = handler._check_file_permission(
+            str(person_dir / "permissions.md"),
+        )
+        assert result is None
+
+    def test_write_to_knowledge_allowed(
+        self, handler: ToolHandler, person_dir: Path,
+    ):
+        result = handler._check_file_permission(
+            str(person_dir / "knowledge" / "note.md"), write=True,
+        )
+        assert result is None
+
+    def test_write_file_handler_blocks_protected(
+        self, handler: ToolHandler, person_dir: Path,
+    ):
+        """write_file tool should block writes to permissions.md."""
+        result = handler.handle(
+            "write_file",
+            {"path": str(person_dir / "permissions.md"), "content": "hacked"},
+        )
+        parsed = json.loads(result)
+        assert parsed["error_type"] == "PermissionDenied"
+
+    def test_edit_file_handler_blocks_protected(
+        self, handler: ToolHandler, person_dir: Path,
+    ):
+        """edit_file tool should block edits to identity.md."""
+        (person_dir / "identity.md").write_text("original identity", encoding="utf-8")
+        result = handler.handle(
+            "edit_file",
+            {
+                "path": str(person_dir / "identity.md"),
+                "old_string": "original",
+                "new_string": "hacked",
+            },
+        )
+        parsed = json.loads(result)
+        assert parsed["error_type"] == "PermissionDenied"
+        # Verify file was NOT modified
+        assert "original identity" == (person_dir / "identity.md").read_text(encoding="utf-8")
+
+
+# ── Command path traversal ───────────────────────────────────
+
+
+class TestCommandPathTraversal:
+    """Tests for path traversal detection in execute_command."""
+
+    def test_command_with_path_traversal_blocked(
+        self, handler: ToolHandler, memory: MagicMock,
+    ):
+        memory.read_permissions.return_value = "## コマンド実行\n- cp: OK"
+        result = handler.handle(
+            "execute_command",
+            {"command": "cp ../other-person/secrets.md ./stolen.md"},
+        )
+        parsed = json.loads(result)
+        assert parsed["error_type"] == "PermissionDenied"
+        assert "outside person directory" in parsed["message"]
+
+    def test_command_without_traversal_allowed(
+        self, handler: ToolHandler, memory: MagicMock,
+    ):
+        memory.read_permissions.return_value = "## コマンド実行\n- echo: OK"
+        result = handler.handle(
+            "execute_command",
+            {"command": "echo hello"},
+        )
+        assert "hello" in result
+
+    def test_command_with_safe_dotdot_in_own_dir(
+        self, handler: ToolHandler, memory: MagicMock, person_dir: Path,
+    ):
+        """Path with .. that still resolves within person_dir should be allowed."""
+        (person_dir / "subdir").mkdir(exist_ok=True)
+        memory.read_permissions.return_value = "## コマンド実行\n- ls: OK"
+        result = handler.handle(
+            "execute_command",
+            {"command": "ls subdir/.."},
+        )
+        # Should NOT be blocked — resolves within person_dir
+        assert "PermissionDenied" not in result or "outside person" not in result
+
+
+# ── _is_protected_write unit tests ───────────────────────────
+
+
+class TestIsProtectedWrite:
+    """Direct unit tests for the _is_protected_write function."""
+
+    def test_protected_file_blocked(self, person_dir: Path):
+        result = _is_protected_write(person_dir, person_dir / "permissions.md")
+        assert result is not None
+        parsed = json.loads(result)
+        assert parsed["error_type"] == "PermissionDenied"
+
+    def test_non_protected_file_allowed(self, person_dir: Path):
+        result = _is_protected_write(person_dir, person_dir / "knowledge" / "note.md")
+        assert result is None
+
+    def test_path_traversal_blocked(self, person_dir: Path):
+        target = person_dir / ".." / "other-person" / "file.md"
+        result = _is_protected_write(person_dir, target)
+        assert result is not None
+        parsed = json.loads(result)
+        assert parsed["error_type"] == "PermissionDenied"
+
+    def test_within_person_dir_allowed(self, person_dir: Path):
+        result = _is_protected_write(person_dir, person_dir / "episodes" / "log.md")
+        assert result is None

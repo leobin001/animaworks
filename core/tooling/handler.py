@@ -38,6 +38,13 @@ OnMessageSentFn = Callable[[str, str, str], None]
 # Shell metacharacters that indicate injection attempts.
 _SHELL_METACHAR_RE = re.compile(r"[;&|`$(){}]")
 
+# Files that persons cannot modify themselves (identity/privilege protection).
+_PROTECTED_FILES = frozenset({
+    "permissions.md",
+    "identity.md",
+    "bootstrap.md",
+})
+
 
 def _error_result(
     error_type: str,
@@ -58,6 +65,32 @@ def _error_result(
     if suggestion:
         result["suggestion"] = suggestion
     return _json.dumps(result, ensure_ascii=False)
+
+
+def _is_protected_write(person_dir: Path, target: Path) -> str | None:
+    """Check if a write target is a protected file or outside person_dir.
+
+    Returns error message string if blocked, None if allowed.
+    """
+    resolved = target.resolve()
+    person_resolved = person_dir.resolve()
+
+    # Path traversal: target must be within person_dir
+    if not resolved.is_relative_to(person_resolved):
+        return _error_result(
+            "PermissionDenied",
+            "Path resolves outside person directory",
+        )
+
+    # Protected file check
+    rel = str(resolved.relative_to(person_resolved))
+    if rel in _PROTECTED_FILES:
+        return _error_result(
+            "PermissionDenied",
+            f"'{rel}' is a protected file and cannot be modified by the person itself",
+        )
+
+    return None
 
 
 class ToolHandler:
@@ -244,6 +277,12 @@ class ToolHandler:
             path = get_common_knowledge_dir() / suffix
         else:
             path = self._person_dir / rel
+            # Prevent path traversal outside person_dir
+            if not path.resolve().is_relative_to(self._person_dir.resolve()):
+                return _error_result(
+                    "PermissionDenied",
+                    "Path resolves outside person directory",
+                )
         if path.exists() and path.is_file():
             logger.debug("read_memory_file path=%s", rel)
             return path.read_text(encoding="utf-8")
@@ -252,6 +291,12 @@ class ToolHandler:
 
     def _handle_write_memory_file(self, args: dict[str, Any]) -> str:
         path = self._person_dir / args["path"]
+
+        # Security check: block protected files and path traversal
+        err = _is_protected_write(self._person_dir, path)
+        if err:
+            return err
+
         path.parent.mkdir(parents=True, exist_ok=True)
         if args.get("mode") == "append":
             with open(path, "a", encoding="utf-8") as f:
@@ -419,7 +464,7 @@ class ToolHandler:
 
     def _handle_write_file(self, args: dict[str, Any]) -> str:
         path_str = args.get("path", "")
-        err = self._check_file_permission(path_str)
+        err = self._check_file_permission(path_str, write=True)
         if err:
             return err
         path = Path(path_str)
@@ -433,7 +478,7 @@ class ToolHandler:
 
     def _handle_edit_file(self, args: dict[str, Any]) -> str:
         path_str = args.get("path", "")
-        err = self._check_file_permission(path_str)
+        err = self._check_file_permission(path_str, write=True)
         if err:
             return err
         path = Path(path_str)
@@ -643,20 +688,24 @@ class ToolHandler:
                     items.append(item)
         return items
 
-    def _check_file_permission(self, path: str) -> str | None:
+    def _check_file_permission(self, path: str, *, write: bool = False) -> str | None:
         """Check if the file path is allowed by permissions.md.
 
         Returns ``None`` if allowed, or an error message string if denied.
 
         Access rules (evaluated in order):
-          1. Own person_dir -- always allowed
+          1. Own person_dir -- always allowed for reads; writes to protected files blocked
           2. Paths listed under ``ファイル操作`` section in permissions.md
           3. Everything else -- denied
         """
         resolved = Path(path).resolve()
 
-        # Always allow access to own person_dir
+        # Own person_dir
         if resolved.is_relative_to(self._person_dir.resolve()):
+            if write:
+                err = _is_protected_write(self._person_dir, resolved)
+                if err:
+                    return err
             return None
 
         permissions = self._memory.read_permissions()
@@ -712,4 +761,18 @@ class ToolHandler:
         cmd_base = argv[0]
         if cmd_base not in allowed:
             return _error_result("PermissionDenied", f"Command '{cmd_base}' not in allowed list", context={"allowed_commands": allowed})
+
+        # Block arguments with path traversal targeting other persons
+        for arg in argv[1:]:
+            if ".." in arg:
+                try:
+                    resolved = (self._person_dir / arg).resolve()
+                    if not resolved.is_relative_to(self._person_dir.resolve()):
+                        return _error_result(
+                            "PermissionDenied",
+                            f"Command argument resolves outside person directory",
+                        )
+                except (ValueError, OSError):
+                    pass
+
         return None
