@@ -742,6 +742,27 @@ class DigitalAnima:
                     )
                     parts.append(load_prompt("unread_messages", summary=summary))
 
+                    # Record received message content to episodes so that
+                    # inter-Anima communications survive in episodic memory.
+                    # Without this, only the heartbeat summary (a generic
+                    # one-liner) would be written, and the actual message
+                    # content would be lost after archiving.
+                    _msg_ts = datetime.now().strftime("%H:%M")
+                    _recordable = [m for m in messages if m.type != "ack"]
+                    for _m in _recordable[:10]:
+                        _episode = (
+                            f"## {_msg_ts} {_m.from_person}からのメッセージ受信\n\n"
+                            f"**送信者**: {_m.from_person}\n"
+                            f"**内容**:\n{_m.content[:1000]}\n"
+                        )
+                        try:
+                            self.memory.append_episode(_episode)
+                        except Exception:
+                            logger.debug(
+                                "[%s] Failed to record message episode from %s",
+                                self.name, _m.from_person, exc_info=True,
+                            )
+
                 # Set heartbeat context for relay
                 if unread_count > 0:
                     self._heartbeat_context = (
@@ -805,6 +826,10 @@ class DigitalAnima:
                             f"## {ts} ハートビート活動\n\n"
                             f"{result.summary[:500]}"
                         )
+                        if unread_count > 0:
+                            episode_entry += (
+                                f"\n\n（{unread_count}件のメッセージを処理）"
+                            )
                         try:
                             self.memory.append_episode(episode_entry)
                         except Exception:
@@ -815,6 +840,12 @@ class DigitalAnima:
                     # send_message tool), so ToolHandler.replied_to may be
                     # incomplete.  Keeping unarchived messages causes
                     # re-processing and heartbeat cascade loops.
+                    #
+                    # NOTE: Message content has already been recorded to
+                    # episodes above (before agent processing).  If that
+                    # recording failed, the messages will still be archived
+                    # here to prevent re-processing loops.  A warning is
+                    # logged so operators can investigate.
                     if unread_count > 0:
                         replied_to = self.agent.replied_to
                         unreplied = senders - replied_to
