@@ -17,6 +17,4 @@ Read, Write, Edit, Bash, Grep, Glob
 rm -rf, システム設定の変更
 
 ## 外部ツール
-- web_search: yes
-- web_fetch: yes
-- image_gen: yes
+- all: yes

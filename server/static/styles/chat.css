@@ -272,6 +272,31 @@
   to { transform: rotate(360deg); }
 }
 
+/* ── Heartbeat Relay Indicator ──────────── */
+
+.heartbeat-relay-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #f0fdf4;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  color: #166534;
+}
+
+.heartbeat-relay-text {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: #f0fdf4;
+  border-left: 2px solid #86efac;
+  border-radius: 0 4px 4px 0;
+  font-size: 0.85rem;
+  color: #374151;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
 /* ── Bootstrap Indicator ─────────────────── */
 
 .bootstrap-indicator {
