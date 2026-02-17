@@ -1,0 +1,251 @@
+"""Unit tests for shared channel messaging in core/messenger.py."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from core.messenger import Messenger
+
+
+@pytest.fixture
+def shared_dir(tmp_path: Path) -> Path:
+    d = tmp_path / "shared"
+    d.mkdir()
+    return d
+
+
+@pytest.fixture
+def messenger(shared_dir: Path) -> Messenger:
+    return Messenger(shared_dir, "alice")
+
+
+# ── post_channel ─────────────────────────────────────────
+
+
+class TestPostChannel:
+    def test_creates_channel_file(self, shared_dir, messenger):
+        messenger.post_channel("general", "Hello everyone!")
+        channel_file = shared_dir / "channels" / "general.jsonl"
+        assert channel_file.exists()
+
+    def test_appends_jsonl_entry(self, shared_dir, messenger):
+        messenger.post_channel("general", "First post")
+        messenger.post_channel("general", "Second post")
+        channel_file = shared_dir / "channels" / "general.jsonl"
+        lines = channel_file.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 2
+        first = json.loads(lines[0])
+        assert first["from"] == "alice"
+        assert first["text"] == "First post"
+        assert first["source"] == "anima"
+        assert "ts" in first
+
+    def test_custom_source(self, shared_dir, messenger):
+        messenger.post_channel("general", "Human message", source="human")
+        channel_file = shared_dir / "channels" / "general.jsonl"
+        entry = json.loads(channel_file.read_text(encoding="utf-8").strip())
+        assert entry["source"] == "human"
+
+    def test_creates_channels_dir(self, shared_dir, messenger):
+        messenger.post_channel("ops", "test")
+        assert (shared_dir / "channels").is_dir()
+
+    def test_multiple_channels(self, shared_dir, messenger):
+        messenger.post_channel("general", "gen msg")
+        messenger.post_channel("ops", "ops msg")
+        assert (shared_dir / "channels" / "general.jsonl").exists()
+        assert (shared_dir / "channels" / "ops.jsonl").exists()
+
+
+# ── read_channel ─────────────────────────────────────────
+
+
+class TestReadChannel:
+    def test_empty_channel(self, shared_dir, messenger):
+        result = messenger.read_channel("general")
+        assert result == []
+
+    def test_nonexistent_channel(self, shared_dir, messenger):
+        result = messenger.read_channel("nonexistent")
+        assert result == []
+
+    def test_reads_messages(self, shared_dir, messenger):
+        messenger.post_channel("general", "msg1")
+        messenger.post_channel("general", "msg2")
+        result = messenger.read_channel("general")
+        assert len(result) == 2
+        assert result[0]["text"] == "msg1"
+        assert result[1]["text"] == "msg2"
+
+    def test_limit(self, shared_dir, messenger):
+        for i in range(10):
+            messenger.post_channel("general", f"msg{i}")
+        result = messenger.read_channel("general", limit=3)
+        assert len(result) == 3
+        # Should return the LAST 3 in chronological order
+        assert result[0]["text"] == "msg7"
+        assert result[1]["text"] == "msg8"
+        assert result[2]["text"] == "msg9"
+
+    def test_human_only(self, shared_dir, messenger):
+        messenger.post_channel("general", "anima msg", source="anima")
+        messenger.post_channel("general", "human msg", source="human")
+        messenger.post_channel("general", "another anima", source="anima")
+        result = messenger.read_channel("general", human_only=True)
+        assert len(result) == 1
+        assert result[0]["text"] == "human msg"
+
+    def test_chronological_order(self, shared_dir, messenger):
+        messenger.post_channel("general", "first")
+        messenger.post_channel("general", "second")
+        messenger.post_channel("general", "third")
+        result = messenger.read_channel("general")
+        assert [m["text"] for m in result] == ["first", "second", "third"]
+
+
+# ── read_channel_mentions ─────────────────────────────────
+
+
+class TestReadChannelMentions:
+    def test_finds_mentions(self, shared_dir, messenger):
+        messenger.post_channel("general", "Hello @alice, please check this")
+        messenger.post_channel("general", "No mention here")
+        messenger.post_channel("general", "@alice another one")
+        result = messenger.read_channel_mentions("general")
+        assert len(result) == 2
+        assert "@alice" in result[0]["text"]
+
+    def test_no_mentions(self, shared_dir, messenger):
+        messenger.post_channel("general", "Hello everyone")
+        result = messenger.read_channel_mentions("general")
+        assert result == []
+
+    def test_custom_name(self, shared_dir, messenger):
+        messenger.post_channel("general", "Hey @bob check this")
+        result = messenger.read_channel_mentions("general", name="bob")
+        assert len(result) == 1
+
+    def test_limit(self, shared_dir, messenger):
+        for i in range(5):
+            messenger.post_channel("general", f"@alice msg{i}")
+        result = messenger.read_channel_mentions("general", limit=2)
+        assert len(result) == 2
+        # Should return the last 2
+        assert result[0]["text"] == "@alice msg3"
+        assert result[1]["text"] == "@alice msg4"
+
+
+# ── read_dm_history ─────────────────────────────────────
+
+
+class TestReadDmHistory:
+    def test_no_history(self, shared_dir, messenger):
+        result = messenger.read_dm_history("bob")
+        assert result == []
+
+    def test_reads_after_send(self, shared_dir, messenger):
+        messenger.send("bob", "Hello Bob!")
+        result = messenger.read_dm_history("bob")
+        assert len(result) == 1
+        assert result[0]["from"] == "alice"
+        assert result[0]["text"] == "Hello Bob!"
+
+    def test_dm_log_path_sorted(self, shared_dir, messenger):
+        path = messenger._get_dm_log_path("bob")
+        assert path.name == "alice-bob.jsonl"
+        # From bob's perspective, path should be the same
+        bob = Messenger(shared_dir, "bob")
+        path_bob = bob._get_dm_log_path("alice")
+        assert path_bob.name == "alice-bob.jsonl"
+
+    def test_bidirectional_history(self, shared_dir):
+        alice = Messenger(shared_dir, "alice")
+        bob = Messenger(shared_dir, "bob")
+        alice.send("bob", "Hi Bob")
+        bob.send("alice", "Hi Alice")
+        # Both should see the full history
+        history_alice = alice.read_dm_history("bob")
+        history_bob = bob.read_dm_history("alice")
+        assert len(history_alice) == 2
+        assert len(history_bob) == 2
+
+    def test_limit(self, shared_dir, messenger):
+        for i in range(10):
+            messenger.send("bob", f"msg{i}")
+        result = messenger.read_dm_history("bob", limit=3)
+        assert len(result) == 3
+
+
+# ── send() DM log integration ───────────────────────────
+
+
+class TestSendDmLog:
+    def test_send_creates_dm_log(self, shared_dir, messenger):
+        messenger.send("bob", "Hello!")
+        dm_log = shared_dir / "dm_logs" / "alice-bob.jsonl"
+        assert dm_log.exists()
+
+    def test_send_no_message_log(self, shared_dir, messenger):
+        """send() should NOT create message_log anymore."""
+        messenger.send("bob", "Hello!")
+        assert not (shared_dir / "message_log").exists()
+
+    def test_dm_log_entry_format(self, shared_dir, messenger):
+        messenger.send("bob", "Test message")
+        dm_log = shared_dir / "dm_logs" / "alice-bob.jsonl"
+        entry = json.loads(dm_log.read_text(encoding="utf-8").strip())
+        assert entry["from"] == "alice"
+        assert entry["text"] == "Test message"
+        assert entry["source"] == "anima"
+        assert "ts" in entry
+
+
+# ── receive_external() channel mirroring ──────────────────
+
+
+class TestReceiveExternalChannelMirroring:
+    def test_human_at_all_mirrors_to_general(self, shared_dir, messenger):
+        messenger.receive_external(
+            "@all Server error is resolved",
+            source="human",
+            external_user_id="taka",
+        )
+        channel_file = shared_dir / "channels" / "general.jsonl"
+        assert channel_file.exists()
+        entry = json.loads(channel_file.read_text(encoding="utf-8").strip())
+        assert entry["source"] == "human"
+        assert "@all" in entry["text"]
+
+    def test_human_without_at_all_no_mirror(self, shared_dir, messenger):
+        messenger.receive_external(
+            "Just a normal message",
+            source="human",
+            external_user_id="taka",
+        )
+        channel_file = shared_dir / "channels" / "general.jsonl"
+        assert not channel_file.exists()
+
+    def test_anima_at_all_no_mirror(self, shared_dir, messenger):
+        """Only human messages with @all should be mirrored."""
+        messenger.receive_external(
+            "@all announcement", source="anima",
+        )
+        channel_file = shared_dir / "channels" / "general.jsonl"
+        assert not channel_file.exists()
+
+    def test_receive_external_still_creates_inbox(self, shared_dir, messenger):
+        messenger.receive_external(
+            "@all resolve notice", source="human", external_user_id="taka",
+        )
+        # inbox should still get the message
+        messages = messenger.receive()
+        assert len(messages) == 1
+
+    def test_receive_external_no_message_log(self, shared_dir, messenger):
+        """receive_external() should NOT create message_log anymore."""
+        messenger.receive_external(
+            "Test", source="human", external_user_id="taka",
+        )
+        assert not (shared_dir / "message_log").exists()

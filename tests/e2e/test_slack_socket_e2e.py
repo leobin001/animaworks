@@ -115,8 +115,8 @@ class TestSlackSocketModeE2E:
         assert msg.to_person == "sakura"
         assert "slack:" in msg.from_person
 
-    async def test_message_log_created(self, data_dir, make_anima, monkeypatch):
-        """Socket Mode messages are also logged in shared/message_log/."""
+    async def test_message_delivered_to_inbox(self, data_dir, make_anima, monkeypatch):
+        """Socket Mode messages are placed in the anima's inbox."""
         make_anima("kotoha")
 
         mgr, handlers = _make_socket_manager(
@@ -137,11 +137,11 @@ class TestSlackSocketModeE2E:
             say=AsyncMock(),
         )
 
-        log_dir = data_dir / "shared" / "message_log"
-        log_files = list(log_dir.glob("*.jsonl"))
-        assert len(log_files) >= 1
-        log_content = log_files[0].read_text(encoding="utf-8")
-        assert "Log this message" in log_content
+        inbox = data_dir / "shared" / "inbox" / "kotoha"
+        files = list(inbox.glob("*.json"))
+        assert len(files) == 1
+        msg = Message.model_validate_json(files[0].read_text(encoding="utf-8"))
+        assert msg.content == "Log this message"
 
     async def test_unmapped_channel_no_inbox(self, data_dir, make_anima, monkeypatch):
         """Messages from unmapped channels do NOT create inbox files."""

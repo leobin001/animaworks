@@ -15,6 +15,7 @@ Based on: docs/design/priming-layer-design.md Phase 1
 """
 
 import asyncio
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -41,6 +42,8 @@ _BUDGET_SENDER_PROFILE = 500
 _BUDGET_RECENT_EPISODES = 600
 _BUDGET_RELATED_KNOWLEDGE = 700
 _BUDGET_SKILL_MATCH = 200
+_BUDGET_CHANNEL_CONTEXT = 500
+_BUDGET_CHANNEL_HUMAN_EXTRA = 200
 
 # Rough characters-per-token for Japanese/English mixed text
 _CHARS_PER_TOKEN = 4
@@ -57,6 +60,7 @@ class PrimingResult:
     recent_episodes: str = ""
     related_knowledge: str = ""
     matched_skills: list[str] = field(default_factory=list)
+    channel_context: str = ""      # Channel E: shared channels
 
     def is_empty(self) -> bool:
         """Return True if no memories were primed."""
@@ -65,6 +69,7 @@ class PrimingResult:
             and not self.recent_episodes
             and not self.related_knowledge
             and not self.matched_skills
+            and not self.channel_context
         )
 
     def total_chars(self) -> int:
@@ -74,6 +79,7 @@ class PrimingResult:
             + len(self.recent_episodes)
             + len(self.related_knowledge)
             + sum(len(s) for s in self.matched_skills)
+            + len(self.channel_context)
         )
 
     def estimated_tokens(self) -> int:
@@ -87,15 +93,17 @@ class PrimingResult:
 class PrimingEngine:
     """Automatic memory priming engine.
 
-    Executes 4-channel parallel memory retrieval:
+    Executes 5-channel parallel memory retrieval:
       A. Sender profile (direct file read)
       B. Recent episodes (last 2 days)
       C. Related knowledge (dense vector search)
       D. Skill matching (filename pattern match)
+      E. Shared channel context (recent channel messages)
     """
 
-    def __init__(self, anima_dir: Path) -> None:
+    def __init__(self, anima_dir: Path, shared_dir: Path | None = None) -> None:
         self.anima_dir = anima_dir
+        self.shared_dir = shared_dir
         self.episodes_dir = anima_dir / "episodes"
         self.knowledge_dir = anima_dir / "knowledge"
         self.skills_dir = anima_dir / "skills"
@@ -138,12 +146,13 @@ class PrimingEngine:
         # Extract keywords for search (simple rule-based for Phase 1)
         keywords = self._extract_keywords(message)
 
-        # Execute 4 channels in parallel
+        # Execute 5 channels in parallel
         results = await asyncio.gather(
             self._channel_a_sender_profile(sender_name),
             self._channel_b_recent_episodes(),
             self._channel_c_related_knowledge(keywords),
             self._channel_d_skill_match(keywords),
+            self._channel_e_shared_channels(),
             return_exceptions=True,
         )
 
@@ -152,6 +161,7 @@ class PrimingEngine:
         recent_episodes = results[1] if isinstance(results[1], str) else ""
         related_knowledge = results[2] if isinstance(results[2], str) else ""
         matched_skills = results[3] if isinstance(results[3], list) else []
+        channel_context = results[4] if isinstance(results[4], str) else ""
 
         # Log exceptions if any
         for i, r in enumerate(results):
@@ -163,23 +173,26 @@ class PrimingEngine:
         budget_episodes = int(_BUDGET_RECENT_EPISODES * (token_budget / _DEFAULT_MAX_PRIMING_TOKENS))
         budget_knowledge = int(_BUDGET_RELATED_KNOWLEDGE * (token_budget / _DEFAULT_MAX_PRIMING_TOKENS))
         budget_skills = int(_BUDGET_SKILL_MATCH * (token_budget / _DEFAULT_MAX_PRIMING_TOKENS))
+        budget_channel = int(_BUDGET_CHANNEL_CONTEXT * (token_budget / _DEFAULT_MAX_PRIMING_TOKENS))
 
         result = PrimingResult(
             sender_profile=self._truncate_head(sender_profile, budget_profile),
             recent_episodes=self._truncate_tail(recent_episodes, budget_episodes),
             related_knowledge=self._truncate_head(related_knowledge, budget_knowledge),
             matched_skills=matched_skills[:max(1, budget_skills // 50)],  # ~50 tokens per skill name
+            channel_context=self._truncate_tail(channel_context, budget_channel),
         )
 
         logger.info(
             "Priming complete: %d chars (~%d tokens), sender_prof=%d, episodes=%d, "
-            "knowledge=%d, skills=%d",
+            "knowledge=%d, skills=%d, channel=%d",
             result.total_chars(),
             result.estimated_tokens(),
             len(result.sender_profile),
             len(result.recent_episodes),
             len(result.related_knowledge),
             len(result.matched_skills),
+            len(result.channel_context),
         )
 
         return result
@@ -387,6 +400,107 @@ class PrimingEngine:
 
         return matched
 
+    async def _channel_e_shared_channels(self) -> str:
+        """Channel E: Shared channel context.
+
+        Retrieves recent messages from shared channels (general, ops).
+        Human messages from the last 24 hours are always included (special budget).
+        @mentions for this anima are prioritized.
+        """
+        if not self.shared_dir:
+            return ""
+
+        from datetime import datetime, timedelta
+
+        channels_dir = self.shared_dir / "channels"
+        if not channels_dir.is_dir():
+            return ""
+
+        anima_name = self.anima_dir.name
+        mention_tag = f"@{anima_name}"
+        now = datetime.now()
+        cutoff_24h = now - timedelta(hours=24)
+
+        parts: list[str] = []
+
+        for channel_name in ("general", "ops"):
+            channel_file = channels_dir / f"{channel_name}.jsonl"
+            if not channel_file.exists():
+                continue
+
+            try:
+                content = await run_sync(channel_file.read_text, encoding="utf-8")
+            except OSError:
+                continue
+
+            lines = content.strip().splitlines()
+            if not lines:
+                continue
+
+            # Parse all entries
+            entries: list[dict] = []
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+            if not entries:
+                continue
+
+            # Select: last 5 entries + human messages within 24h + @mentions
+            selected: list[dict] = []
+            seen_indices: set[int] = set()
+
+            # Last 5 entries
+            for i in range(max(0, len(entries) - 5), len(entries)):
+                if i not in seen_indices:
+                    selected.append(entries[i])
+                    seen_indices.add(i)
+
+            # Human messages within 24h and @mentions
+            for i, entry in enumerate(entries):
+                if i in seen_indices:
+                    continue
+                ts_str = entry.get("ts", "")
+                try:
+                    ts = datetime.fromisoformat(ts_str)
+                except (ValueError, TypeError):
+                    continue
+                is_human = entry.get("source") == "human"
+                is_mention = mention_tag in entry.get("text", "")
+                if (is_human and ts >= cutoff_24h) or is_mention:
+                    selected.append(entry)
+                    seen_indices.add(i)
+
+            # Sort by timestamp
+            selected.sort(key=lambda e: e.get("ts", ""))
+
+            # Format
+            channel_parts: list[str] = []
+            for entry in selected:
+                src = entry.get("source", "anima")
+                marker = " [human]" if src == "human" else ""
+                channel_parts.append(
+                    f"[{entry.get('ts', '?')}] {entry.get('from', '?')}{marker}: "
+                    f"{entry.get('text', '')}"
+                )
+
+            if channel_parts:
+                parts.append(f"### #{channel_name}")
+                parts.extend(channel_parts)
+                parts.append("")
+
+        if not parts:
+            logger.debug("Channel E: No shared channel messages found")
+            return ""
+
+        result = "\n".join(parts)
+        logger.debug("Channel E: Loaded channel context (%d chars)", len(result))
+        return result
+
     # ── Dynamic budget adjustment (Phase 3) ─────────────────────
 
     def _classify_message_type(self, message: str, channel: str) -> str:
@@ -586,6 +700,12 @@ def format_priming_section(result: PrimingResult, sender_name: str = "human") ->
         parts.append("### 関連する知識")
         parts.append("")
         parts.append(result.related_knowledge)
+        parts.append("")
+
+    if result.channel_context:
+        parts.append("### 社内チャネルの様子")
+        parts.append("")
+        parts.append(result.channel_context)
         parts.append("")
 
     if result.matched_skills:

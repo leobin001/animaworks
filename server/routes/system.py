@@ -404,21 +404,56 @@ def create_system_router() -> APIRouter:
                 except Exception:
                     logger.warning("Failed to load cron logs for %s", name, exc_info=True)
 
-        # Inter-anima message logs (shared across all animas)
-        msg_log_dir = shared_dir / "message_log"
-        if msg_log_dir.exists():
+        # ── Channel messages (shared channels) ──
+        channels_dir = shared_dir / "channels"
+        if channels_dir.exists():
             anima_filter = set(target_names)
             try:
-                for log_file in sorted(msg_log_dir.glob("*.jsonl"), reverse=True):
-                    for line in log_file.read_text(encoding="utf-8").strip().splitlines():
+                for channel_file in sorted(channels_dir.glob("*.jsonl"), reverse=True):
+                    channel_name = channel_file.stem
+                    for line in channel_file.read_text(encoding="utf-8").strip().splitlines():
                         try:
                             entry = json.loads(line)
-                            ts_str = entry.get("timestamp", "")
+                            ts_str = entry.get("ts", "")
                             ts = datetime.fromisoformat(ts_str) if ts_str else None
                             if ts and ts.replace(tzinfo=timezone.utc) < cutoff:
                                 continue
-                            from_p = entry.get("from_person", "")
-                            to_p = entry.get("to_person", "")
+                            from_p = entry.get("from", "")
+                            events.append({
+                                "type": "message",
+                                "animas": [from_p],
+                                "timestamp": ts_str,
+                                "summary": f"#{channel_name} {from_p}: {entry.get('text', '')[:60]}",
+                                "metadata": {
+                                    "from_person": from_p,
+                                    "channel": channel_name,
+                                    "text": entry.get("text", ""),
+                                    "source": entry.get("source", "anima"),
+                                },
+                            })
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            continue
+            except Exception:
+                logger.warning("Failed to load channel logs", exc_info=True)
+
+        # ── DM logs ──
+        dm_logs_dir = shared_dir / "dm_logs"
+        if dm_logs_dir.exists():
+            anima_filter = set(target_names)
+            try:
+                for dm_file in sorted(dm_logs_dir.glob("*.jsonl"), reverse=True):
+                    # Parse pair from filename (e.g., "alice-bob.jsonl")
+                    pair = dm_file.stem.split("-", 1)
+                    for line in dm_file.read_text(encoding="utf-8").strip().splitlines():
+                        try:
+                            entry = json.loads(line)
+                            ts_str = entry.get("ts", "")
+                            ts = datetime.fromisoformat(ts_str) if ts_str else None
+                            if ts and ts.replace(tzinfo=timezone.utc) < cutoff:
+                                continue
+                            from_p = entry.get("from", "")
+                            # Determine the other party
+                            to_p = pair[1] if from_p == pair[0] else pair[0] if len(pair) > 1 else ""
                             # Include if either sender or receiver matches anima filter
                             if anima and from_p not in anima_filter and to_p not in anima_filter:
                                 continue
@@ -426,19 +461,18 @@ def create_system_router() -> APIRouter:
                                 "type": "message",
                                 "animas": [from_p, to_p],
                                 "timestamp": ts_str,
-                                "summary": f"{from_p} → {to_p}: {entry.get('summary', '')[:60]}",
+                                "summary": f"{from_p} → {to_p}: {entry.get('text', '')[:60]}",
                                 "metadata": {
                                     "from_person": from_p,
                                     "to_person": to_p,
-                                    "message_id": entry.get("message_id", ""),
-                                    "thread_id": entry.get("thread_id", ""),
-                                    "text": entry.get("summary", ""),
+                                    "text": entry.get("text", ""),
+                                    "source": entry.get("source", "anima"),
                                 },
                             })
                         except (json.JSONDecodeError, TypeError, ValueError):
                             continue
             except Exception:
-                logger.warning("Failed to load message logs", exc_info=True)
+                logger.warning("Failed to load DM logs", exc_info=True)
 
         # Sort descending by timestamp
         events.sort(key=lambda e: e.get("timestamp", ""), reverse=True)

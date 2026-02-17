@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from core.schemas import Message
@@ -57,8 +57,8 @@ class Messenger:
         filepath = target_dir / f"{msg.id}.json"
         filepath.write_text(msg.model_dump_json(indent=2), encoding="utf-8")
         logger.info("Message sent: %s -> %s (%s)", self.anima_name, to, msg.id)
-        # Append to shared message log for activity timeline
-        self._append_message_log(msg)
+        # Append to DM log for activity timeline
+        self._append_dm_log(to, content)
         return msg
 
     def reply(self, original: Message, content: str) -> Message:
@@ -70,26 +70,108 @@ class Messenger:
             reply_to=original.id,
         )
 
-    def _append_message_log(self, msg: Message) -> None:
-        """Append message event to shared activity log."""
-        log_dir = self.shared_dir / "message_log"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / f"{date.today().isoformat()}.jsonl"
+    # ── Channel operations ──────────────────────────────────
+
+    def post_channel(self, channel: str, text: str, source: str = "anima") -> None:
+        """Post a message to a shared channel (append-only JSONL)."""
+        channels_dir = self.shared_dir / "channels"
+        channels_dir.mkdir(parents=True, exist_ok=True)
+        filepath = channels_dir / f"{channel}.jsonl"
         entry = json.dumps({
-            "timestamp": msg.timestamp.isoformat(),
-            "from_person": msg.from_person,
-            "to_person": msg.to_person,
-            "type": msg.type,
-            "summary": msg.content[:200],
-            "message_id": msg.id,
-            "thread_id": msg.thread_id,
-            "source": msg.source,
+            "ts": datetime.now().isoformat(),
+            "from": self.anima_name,
+            "text": text,
+            "source": source,
         }, ensure_ascii=False)
         try:
-            with log_file.open("a", encoding="utf-8") as f:
+            with filepath.open("a", encoding="utf-8") as f:
+                f.write(entry + "\n")
+            logger.info("Channel post: %s -> #%s", self.anima_name, channel)
+        except OSError:
+            logger.warning("Failed to post to channel: %s", channel)
+
+    def read_channel(
+        self, channel: str, limit: int = 20, human_only: bool = False,
+    ) -> list[dict]:
+        """Read recent messages from a shared channel."""
+        filepath = self.shared_dir / "channels" / f"{channel}.jsonl"
+        if not filepath.exists():
+            return []
+        try:
+            lines = filepath.read_text(encoding="utf-8").strip().splitlines()
+        except OSError:
+            logger.warning("Failed to read channel: %s", channel)
+            return []
+        entries: list[dict] = []
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if human_only and entry.get("source") != "human":
+                continue
+            entries.append(entry)
+            if len(entries) >= limit:
+                break
+        entries.reverse()  # Restore chronological order
+        return entries
+
+    def read_channel_mentions(
+        self, channel: str, name: str | None = None, limit: int = 10,
+    ) -> list[dict]:
+        """Read messages mentioning @name from a shared channel."""
+        target = name or self.anima_name
+        mention_tag = f"@{target}"
+        all_msgs = self.read_channel(channel, limit=1000)
+        mentions = [m for m in all_msgs if mention_tag in m.get("text", "")]
+        return mentions[-limit:]
+
+    def read_dm_history(self, peer: str, limit: int = 20) -> list[dict]:
+        """Read DM history with a specific peer."""
+        filepath = self._get_dm_log_path(peer)
+        if not filepath.exists():
+            return []
+        try:
+            lines = filepath.read_text(encoding="utf-8").strip().splitlines()
+        except OSError:
+            logger.warning("Failed to read DM history with: %s", peer)
+            return []
+        entries: list[dict] = []
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+            if len(entries) >= limit:
+                break
+        entries.reverse()
+        return entries
+
+    def _get_dm_log_path(self, peer: str) -> Path:
+        """Get DM log file path (pair names sorted alphabetically)."""
+        pair = sorted([self.anima_name, peer])
+        return self.shared_dir / "dm_logs" / f"{pair[0]}-{pair[1]}.jsonl"
+
+    def _append_dm_log(self, peer: str, text: str, source: str = "anima") -> None:
+        """Append a message to the DM log for this peer."""
+        dm_logs_dir = self.shared_dir / "dm_logs"
+        dm_logs_dir.mkdir(parents=True, exist_ok=True)
+        filepath = self._get_dm_log_path(peer)
+        entry = json.dumps({
+            "ts": datetime.now().isoformat(),
+            "from": self.anima_name,
+            "text": text,
+            "source": source,
+        }, ensure_ascii=False)
+        try:
+            with filepath.open("a", encoding="utf-8") as f:
                 f.write(entry + "\n")
         except OSError:
-            logger.warning("Failed to append message log: %s", log_file)
+            logger.warning("Failed to append DM log: %s", filepath)
 
     def receive(self) -> list[Message]:
         messages: list[Message] = []
@@ -197,7 +279,9 @@ class Messenger:
             "External message received: %s -> %s (source=%s, id=%s)",
             msg.from_person, self.anima_name, source, msg.id,
         )
-        self._append_message_log(msg)
+        # Mirror to general channel if human uses @all
+        if source == "human" and "@all" in content:
+            self.post_channel("general", content, source="human")
         return msg
 
     async def send_async(
@@ -216,82 +300,3 @@ class Messenger:
             thread_id=thread_id,
             reply_to=reply_to,
         )
-
-
-# ── Message Log Reconciliation ──────────────────────────
-
-
-def reconcile_message_log(shared_dir: Path) -> int:
-    """Reconcile processed inbox messages into the shared message log.
-
-    Scans ``shared/inbox/*/processed/*.json`` for all processed messages
-    and appends any missing entries to ``shared/message_log/{date}.jsonl``.
-
-    Args:
-        shared_dir: Path to the shared runtime directory.
-
-    Returns:
-        Number of newly added log entries.
-    """
-    inbox_dir = shared_dir / "inbox"
-    if not inbox_dir.exists():
-        logger.info("reconcile_message_log: inbox dir does not exist, skipping")
-        return 0
-
-    log_dir = shared_dir / "message_log"
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    # Collect all known message IDs from existing log files
-    known_ids: set[str] = set()
-    for log_file in log_dir.glob("*.jsonl"):
-        try:
-            for line in log_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                    mid = entry.get("message_id", "")
-                    if mid:
-                        known_ids.add(mid)
-                except json.JSONDecodeError:
-                    continue
-        except OSError:
-            logger.warning("Failed to read log file: %s", log_file)
-
-    # Scan all processed messages across all anima inboxes
-    added = 0
-    for processed_dir in sorted(inbox_dir.glob("*/processed")):
-        for msg_file in sorted(processed_dir.glob("*.json")):
-            try:
-                data = json.loads(msg_file.read_text(encoding="utf-8"))
-                msg = Message(**data)
-            except Exception:
-                logger.warning("Skipping unparseable message: %s", msg_file)
-                continue
-
-            if msg.id in known_ids:
-                continue
-
-            # Build log entry in the same format as _append_message_log
-            log_date = msg.timestamp.date().isoformat()
-            log_file = log_dir / f"{log_date}.jsonl"
-            entry = json.dumps({
-                "timestamp": msg.timestamp.isoformat(),
-                "from_person": msg.from_person,
-                "to_person": msg.to_person,
-                "type": msg.type,
-                "summary": msg.content[:200],
-                "message_id": msg.id,
-                "thread_id": msg.thread_id,
-            }, ensure_ascii=False)
-            try:
-                with log_file.open("a", encoding="utf-8") as f:
-                    f.write(entry + "\n")
-                known_ids.add(msg.id)
-                added += 1
-            except OSError:
-                logger.warning("Failed to append reconciled entry: %s", log_file)
-
-    logger.info("reconcile_message_log: added %d entries", added)
-    return added

@@ -165,9 +165,8 @@ class TestLifespan:
     """Tests for the lifespan context manager."""
 
     @pytest.mark.asyncio
-    @patch("server.app.reconcile_message_log")
     @patch("server.app.AsyncIOScheduler")
-    async def test_lifespan_start_and_stop(self, mock_scheduler_cls, mock_reconcile):
+    async def test_lifespan_start_and_stop(self, mock_scheduler_cls):
         from server.app import lifespan
 
         mock_app = MagicMock()

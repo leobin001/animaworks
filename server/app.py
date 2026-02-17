@@ -25,7 +25,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse as StarletteJSONResponse
 
 from core.config import load_config
-from core.messenger import reconcile_message_log
 from core.supervisor import ProcessSupervisor
 from server.routes import create_router
 from server.routes.setup import create_setup_router
@@ -129,22 +128,9 @@ async def lifespan(app: FastAPI):
 
         asyncio.create_task(_reconcile_assets_at_startup(app.state.animas_dir))
 
-        # ── Message log reconciliation ─────────────────────
         shared_dir = app.state.shared_dir
-        try:
-            reconcile_message_log(shared_dir)
-        except Exception:
-            logger.exception("Initial message log reconciliation failed")
 
         msg_log_scheduler = AsyncIOScheduler(timezone="Asia/Tokyo")
-        msg_log_scheduler.add_job(
-            reconcile_message_log,
-            IntervalTrigger(minutes=10),
-            args=[shared_dir],
-            id="message_log_reconciliation",
-            name="System: Message Log Reconciliation",
-            replace_existing=True,
-        )
 
         # ── Orphan anima detection ───────────────────────
         from core.org_sync import detect_orphan_animas

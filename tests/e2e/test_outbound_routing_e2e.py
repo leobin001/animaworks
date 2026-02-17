@@ -261,8 +261,8 @@ class TestFallbackBehavior:
              patch("core.config.models.load_config", return_value=config_with_aliases):
             handler.handle("send_message", {"to": "user", "content": "hello"})
 
-        # messenger.send() should have been called for activity timeline
-        log_dir = shared_dir / "message_log"
+        # messenger.send() should have created a DM log for activity timeline
+        log_dir = shared_dir / "dm_logs"
         assert log_dir.exists()
         log_files = list(log_dir.glob("*.jsonl"))
         assert len(log_files) > 0

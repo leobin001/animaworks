@@ -226,6 +226,13 @@ class ToolHandler:
                 result = self._handle_write_memory_file(args)
             elif name == "send_message":
                 result = self._handle_send_message(args)
+            # Channel tools
+            elif name == "post_channel":
+                result = self._handle_post_channel(args)
+            elif name == "read_channel":
+                result = self._handle_read_channel(args)
+            elif name == "read_dm_history":
+                result = self._handle_read_dm_history(args)
             # File operation tools
             elif name == "read_file":
                 result = self._handle_read_file(args)
@@ -462,6 +469,46 @@ class ToolHandler:
                 logger.exception("on_message_sent callback failed")
 
         return f"Message sent to {internal_to} (id: {msg.id}, thread: {msg.thread_id})"
+
+    # ── Channel tool handlers ────────────────────────────────
+
+    def _handle_post_channel(self, args: dict[str, Any]) -> str:
+        if not self._messenger:
+            return "Error: messenger not configured"
+        channel = args.get("channel", "")
+        text = args.get("text", "")
+        if not channel or not text:
+            return _error_result("InvalidArguments", "channel and text are required")
+        self._messenger.post_channel(channel, text)
+        logger.info("post_channel channel=%s anima=%s", channel, self._anima_name)
+        return f"Posted to #{channel}"
+
+    def _handle_read_channel(self, args: dict[str, Any]) -> str:
+        if not self._messenger:
+            return "Error: messenger not configured"
+        channel = args.get("channel", "")
+        if not channel:
+            return _error_result("InvalidArguments", "channel is required")
+        limit = args.get("limit", 20)
+        human_only = args.get("human_only", False)
+        messages = self._messenger.read_channel(channel, limit=limit, human_only=human_only)
+        if not messages:
+            return f"No messages in #{channel}"
+        import json as _json
+        return _json.dumps(messages, ensure_ascii=False, indent=2)
+
+    def _handle_read_dm_history(self, args: dict[str, Any]) -> str:
+        if not self._messenger:
+            return "Error: messenger not configured"
+        peer = args.get("peer", "")
+        if not peer:
+            return _error_result("InvalidArguments", "peer is required")
+        limit = args.get("limit", 20)
+        messages = self._messenger.read_dm_history(peer, limit=limit)
+        if not messages:
+            return f"No DM history with {peer}"
+        import json as _json
+        return _json.dumps(messages, ensure_ascii=False, indent=2)
 
     # ── Human notification handler ────────────────────────────
 

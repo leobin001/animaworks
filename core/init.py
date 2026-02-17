@@ -176,9 +176,17 @@ def _ensure_runtime_only_dirs(data_dir: Path) -> None:
     (data_dir / "animas").mkdir(parents=True, exist_ok=True)
     (data_dir / "shared" / "inbox").mkdir(parents=True, exist_ok=True)
     (data_dir / "shared" / "users").mkdir(parents=True, exist_ok=True)
+    (data_dir / "shared" / "channels").mkdir(parents=True, exist_ok=True)
+    (data_dir / "shared" / "dm_logs").mkdir(parents=True, exist_ok=True)
     (data_dir / "tmp" / "attachments").mkdir(parents=True, exist_ok=True)
     (data_dir / "common_skills").mkdir(parents=True, exist_ok=True)
     (data_dir / "common_knowledge").mkdir(parents=True, exist_ok=True)
+
+    # Create initial shared channels
+    for channel in ("general", "ops"):
+        channel_file = data_dir / "shared" / "channels" / f"{channel}.jsonl"
+        if not channel_file.exists():
+            channel_file.touch()
 
 
 def _validate_safe_path(data_dir: Path) -> None:

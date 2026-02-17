@@ -219,7 +219,6 @@ class TestSlackMessageDelivery:
         # Setup data dir
         shared_dir = tmp_path / "shared"
         (shared_dir / "inbox" / "sakura").mkdir(parents=True)
-        (shared_dir / "message_log").mkdir(parents=True)
         mock_data_dir.return_value = tmp_path
 
         # Config with Slack enabled
@@ -393,7 +392,6 @@ class TestChatworkMessageDelivery:
     ):
         shared_dir = tmp_path / "shared"
         (shared_dir / "inbox" / "kotoha").mkdir(parents=True)
-        (shared_dir / "message_log").mkdir(parents=True)
         mock_data_dir.return_value = tmp_path
 
         mock_config.return_value = AnimaWorksConfig(

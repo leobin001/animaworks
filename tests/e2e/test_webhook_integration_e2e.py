@@ -114,13 +114,6 @@ class TestSlackWebhookE2E:
         assert msg.to_person == "sakura"
         assert "slack:" in msg.from_person
 
-        # Verify message log entry
-        log_dir = data_dir / "shared" / "message_log"
-        log_files = list(log_dir.glob("*.jsonl"))
-        assert len(log_files) >= 1
-        log_content = log_files[0].read_text(encoding="utf-8")
-        assert "E2E test message from Slack" in log_content
-
     def test_challenge_response(self, e2e_client):
         """Slack URL verification returns challenge value."""
         resp = e2e_client.post(

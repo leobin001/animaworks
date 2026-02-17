@@ -257,13 +257,16 @@ class TestBuildToolList:
             include_tool_management=True,
         )
         names = [t["name"] for t in result]
-        # 4 memory + 4 file + 2 search + 1 discovery + 2 tool_management = 13
-        assert len(result) == 13
+        # 4 memory + 3 channel + 4 file + 2 search + 1 discovery + 2 tool_management = 16
+        assert len(result) == 16
         assert "search_code" in names
         assert "list_directory" in names
         assert "discover_tools" in names
         assert "refresh_tools" in names
         assert "share_tool" in names
+        assert "post_channel" in names
+        assert "read_channel" in names
+        assert "read_dm_history" in names
 
     def test_does_not_mutate_memory_tools(self):
         original_len = len(MEMORY_TOOLS)

@@ -101,6 +101,76 @@ MEMORY_TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+CHANNEL_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "post_channel",
+        "description": (
+            "共有チャネルにメッセージを投稿します。"
+            "全員が閲覧できるチャネル（general, ops等）にメッセージを書き込みます。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "type": "string",
+                    "description": "チャネル名 (例: general, ops)",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "投稿するメッセージ本文",
+                },
+            },
+            "required": ["channel", "text"],
+        },
+    },
+    {
+        "name": "read_channel",
+        "description": (
+            "共有チャネルの直近メッセージを読みます。"
+            "human_only=trueでユーザー発言のみフィルタリングできます。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "type": "string",
+                    "description": "チャネル名 (例: general, ops)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "取得件数（デフォルト: 20）",
+                },
+                "human_only": {
+                    "type": "boolean",
+                    "description": "trueの場合、人間の発言のみ返す",
+                },
+            },
+            "required": ["channel"],
+        },
+    },
+    {
+        "name": "read_dm_history",
+        "description": (
+            "特定の相手とのDM履歴を読みます。"
+            "過去のダイレクトメッセージのやり取りを時系列で確認できます。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "peer": {
+                    "type": "string",
+                    "description": "DM相手の名前",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "取得件数（デフォルト: 20）",
+                },
+            },
+            "required": ["peer"],
+        },
+    },
+]
+
 FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "read_file",
@@ -411,6 +481,8 @@ def build_tool_list(
         Combined list in canonical format.
     """
     tools: list[dict[str, Any]] = list(MEMORY_TOOLS)
+    # Channel tools are always included (shared messaging)
+    tools.extend(CHANNEL_TOOLS)
     if include_file_tools:
         tools.extend(FILE_TOOLS)
     if include_search_tools:

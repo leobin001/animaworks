@@ -291,66 +291,59 @@ class TestSendAsync:
         assert len(list(bob_inbox.glob("*.json"))) == 1
 
 
-# ── _append_message_log ──────────────────────────────────
+# ── _append_dm_log ───────────────────────────────────────
 
 
-class TestAppendMessageLog:
-    def test_send_creates_message_log(self, shared_dir, messenger):
+class TestAppendDmLog:
+    def test_send_creates_dm_log(self, shared_dir, messenger):
         messenger.send("bob", "Hello Bob!")
-        log_dir = shared_dir / "message_log"
+        log_dir = shared_dir / "dm_logs"
         assert log_dir.is_dir()
-        log_files = list(log_dir.glob("*.jsonl"))
-        assert len(log_files) == 1
-        lines = log_files[0].read_text(encoding="utf-8").strip().splitlines()
+        # Pair name sorted alphabetically: alice-bob
+        log_file = log_dir / "alice-bob.jsonl"
+        assert log_file.exists()
+        lines = log_file.read_text(encoding="utf-8").strip().splitlines()
         assert len(lines) == 1
         entry = json.loads(lines[0])
-        assert entry["from_person"] == "alice"
-        assert entry["to_person"] == "bob"
-        assert entry["type"] == "message"
-        assert "Hello Bob!" in entry["summary"]
-        assert "message_id" in entry
-        assert "thread_id" in entry
-        assert "timestamp" in entry
+        assert entry["from"] == "alice"
+        assert entry["text"] == "Hello Bob!"
+        assert "ts" in entry
 
     def test_multiple_sends_append(self, shared_dir, messenger):
         messenger.send("bob", "First")
-        messenger.send("charlie", "Second")
-        log_dir = shared_dir / "message_log"
-        log_files = list(log_dir.glob("*.jsonl"))
-        lines = log_files[0].read_text(encoding="utf-8").strip().splitlines()
+        messenger.send("bob", "Second")
+        log_file = shared_dir / "dm_logs" / "alice-bob.jsonl"
+        lines = log_file.read_text(encoding="utf-8").strip().splitlines()
         assert len(lines) == 2
         first = json.loads(lines[0])
         second = json.loads(lines[1])
-        assert first["to_person"] == "bob"
-        assert second["to_person"] == "charlie"
+        assert first["text"] == "First"
+        assert second["text"] == "Second"
 
-    def test_reply_creates_log_entry(self, shared_dir, messenger):
+    def test_reply_creates_dm_log_entry(self, shared_dir, messenger):
         original = Message(
             from_person="bob", to_person="alice",
             content="original", thread_id="thread-abc",
         )
         messenger.reply(original, "Got it!")
-        log_dir = shared_dir / "message_log"
-        log_files = list(log_dir.glob("*.jsonl"))
-        lines = log_files[0].read_text(encoding="utf-8").strip().splitlines()
+        # Reply to bob -> dm_logs/alice-bob.jsonl
+        log_file = shared_dir / "dm_logs" / "alice-bob.jsonl"
+        assert log_file.exists()
+        lines = log_file.read_text(encoding="utf-8").strip().splitlines()
         assert len(lines) == 1
         entry = json.loads(lines[0])
-        assert entry["from_person"] == "alice"
-        assert entry["to_person"] == "bob"
-        assert entry["thread_id"] == "thread-abc"
+        assert entry["from"] == "alice"
+        assert entry["text"] == "Got it!"
 
-    def test_summary_truncated(self, shared_dir, messenger):
-        long_content = "A" * 500
-        messenger.send("bob", long_content)
-        log_dir = shared_dir / "message_log"
-        log_files = list(log_dir.glob("*.jsonl"))
-        lines = log_files[0].read_text(encoding="utf-8").strip().splitlines()
-        entry = json.loads(lines[0])
-        assert len(entry["summary"]) == 200
+    def test_different_peers_separate_files(self, shared_dir, messenger):
+        messenger.send("bob", "To Bob")
+        messenger.send("charlie", "To Charlie")
+        assert (shared_dir / "dm_logs" / "alice-bob.jsonl").exists()
+        assert (shared_dir / "dm_logs" / "alice-charlie.jsonl").exists()
 
-    async def test_send_async_creates_log(self, shared_dir, messenger):
+    async def test_send_async_creates_dm_log(self, shared_dir, messenger):
         await messenger.send_async("bob", "async msg")
-        log_dir = shared_dir / "message_log"
+        log_dir = shared_dir / "dm_logs"
         assert log_dir.is_dir()
-        log_files = list(log_dir.glob("*.jsonl"))
-        assert len(log_files) == 1
+        log_file = log_dir / "alice-bob.jsonl"
+        assert log_file.exists()

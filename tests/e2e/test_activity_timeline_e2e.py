@@ -74,12 +74,21 @@ def _write_cron_log(anima_dir: Path, entries: list[dict]) -> None:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def _write_message_log(shared_dir: Path, entries: list[dict]) -> None:
-    """Write message log entries."""
-    log_dir = shared_dir / "message_log"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    from datetime import date
-    log_file = log_dir / f"{date.today().isoformat()}.jsonl"
+def _write_channel_log(shared_dir: Path, channel: str, entries: list[dict]) -> None:
+    """Write channel log entries to shared/channels/{channel}.jsonl."""
+    channels_dir = shared_dir / "channels"
+    channels_dir.mkdir(parents=True, exist_ok=True)
+    log_file = channels_dir / f"{channel}.jsonl"
+    with log_file.open("a", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _write_dm_log(shared_dir: Path, pair: str, entries: list[dict]) -> None:
+    """Write DM log entries to shared/dm_logs/{pair}.jsonl."""
+    dm_dir = shared_dir / "dm_logs"
+    dm_dir.mkdir(parents=True, exist_ok=True)
+    log_file = dm_dir / f"{pair}.jsonl"
     with log_file.open("a", encoding="utf-8") as f:
         for entry in entries:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -158,14 +167,14 @@ class TestActivityPagination:
 
 
 class TestActivityMessageLog:
-    """Test that inter-anima message logs appear in activity events."""
+    """Test that inter-anima DM logs appear in activity events."""
 
-    async def test_message_events_returned(self, tmp_path: Path) -> None:
+    async def test_dm_events_returned(self, tmp_path: Path) -> None:
         shared_dir = tmp_path / "shared"
         shared_dir.mkdir(parents=True, exist_ok=True)
         now = datetime.now(timezone.utc)
-        _write_message_log(shared_dir, [
-            {"timestamp": now.isoformat(), "from_person": "alice", "to_person": "bob", "type": "message", "summary": "Hello Bob!", "message_id": "msg-1", "thread_id": "t-1"},
+        _write_dm_log(shared_dir, "alice-bob", [
+            {"ts": now.isoformat(), "from": "alice", "text": "Hello Bob!", "source": "anima"},
         ])
         app = _create_app(tmp_path, anima_names=["alice", "bob"])
         transport = ASGITransport(app=app)
@@ -181,13 +190,15 @@ class TestActivityMessageLog:
         assert evt["metadata"]["from_person"] == "alice"
         assert evt["metadata"]["to_person"] == "bob"
 
-    async def test_message_events_with_anima_filter(self, tmp_path: Path) -> None:
+    async def test_dm_events_with_anima_filter(self, tmp_path: Path) -> None:
         shared_dir = tmp_path / "shared"
         shared_dir.mkdir(parents=True, exist_ok=True)
         now = datetime.now(timezone.utc)
-        _write_message_log(shared_dir, [
-            {"timestamp": now.isoformat(), "from_person": "alice", "to_person": "bob", "type": "message", "summary": "A to B", "message_id": "msg-1", "thread_id": "t-1"},
-            {"timestamp": now.isoformat(), "from_person": "charlie", "to_person": "dave", "type": "message", "summary": "C to D", "message_id": "msg-2", "thread_id": "t-2"},
+        _write_dm_log(shared_dir, "alice-bob", [
+            {"ts": now.isoformat(), "from": "alice", "text": "A to B", "source": "anima"},
+        ])
+        _write_dm_log(shared_dir, "charlie-dave", [
+            {"ts": now.isoformat(), "from": "charlie", "text": "C to D", "source": "anima"},
         ])
         app = _create_app(tmp_path, anima_names=["alice", "bob", "charlie", "dave"])
         transport = ASGITransport(app=app)
@@ -198,7 +209,7 @@ class TestActivityMessageLog:
         assert len(msg_events) == 1
         assert "A to B" in msg_events[0]["summary"]
 
-    async def test_no_message_log_dir(self, tmp_path: Path) -> None:
+    async def test_no_channels_or_dm_logs_dir(self, tmp_path: Path) -> None:
         app = _create_app(tmp_path, anima_names=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -226,8 +237,8 @@ class TestActivityTypeFilter:
         _write_cron_log(anima_dir, [
             {"timestamp": now.isoformat(), "task": "daily", "summary": "Cron 1", "duration_ms": 200},
         ])
-        _write_message_log(shared_dir, [
-            {"timestamp": now.isoformat(), "from_person": "alice", "to_person": "bob", "type": "message", "summary": "msg", "message_id": "m1", "thread_id": "t1"},
+        _write_dm_log(shared_dir, "alice-bob", [
+            {"ts": now.isoformat(), "from": "alice", "text": "msg", "source": "anima"},
         ])
         app = _create_app(tmp_path, anima_names=["alice"])
         transport = ASGITransport(app=app)
@@ -249,8 +260,8 @@ class TestActivityTypeFilter:
         _write_cron_log(anima_dir, [
             {"timestamp": now.isoformat(), "task": "daily", "summary": "Cron", "duration_ms": 200},
         ])
-        _write_message_log(shared_dir, [
-            {"timestamp": now.isoformat(), "from_person": "alice", "to_person": "bob", "type": "message", "summary": "msg", "message_id": "m1", "thread_id": "t1"},
+        _write_dm_log(shared_dir, "alice-bob", [
+            {"ts": now.isoformat(), "from": "alice", "text": "msg", "source": "anima"},
         ])
         app = _create_app(tmp_path, anima_names=["alice"])
         transport = ASGITransport(app=app)
@@ -280,8 +291,8 @@ class TestActivityMixedEvents:
         _write_cron_log(anima_dir, [
             {"timestamp": now.isoformat(), "task": "daily", "summary": "Cron", "duration_ms": 200},
         ])
-        _write_message_log(shared_dir, [
-            {"timestamp": now.isoformat(), "from_person": "alice", "to_person": "bob", "type": "message", "summary": "msg", "message_id": "m1", "thread_id": "t1"},
+        _write_dm_log(shared_dir, "alice-bob", [
+            {"ts": now.isoformat(), "from": "alice", "text": "msg", "source": "anima"},
         ])
         app = _create_app(tmp_path, anima_names=["alice"])
         transport = ASGITransport(app=app)
