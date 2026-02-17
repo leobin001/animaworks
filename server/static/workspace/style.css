@@ -256,6 +256,16 @@ html, body {
   text-transform: capitalize;
 }
 
+.status-model {
+  font-size: 0.7rem;
+  color: #6c6cff;
+  background: #eef;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
 .status-section {
   background: #fafafa;
   border: 1px solid #eee;

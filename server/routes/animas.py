@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from core.config.models import AnimaModelConfig, load_config
+from core.config.models import AnimaModelConfig, load_config, resolve_anima_config
 from server.dependencies import get_anima
 
 logger = logging.getLogger("animaworks.routes.animas")
@@ -52,6 +52,14 @@ def create_animas_router() -> APIRouter:
             # Read supervisor from config
             anima_cfg = config.animas.get(name, AnimaModelConfig())
 
+            # Resolve model name
+            model = None
+            try:
+                resolved, _ = resolve_anima_config(config, name, anima_dir=anima_dir)
+                model = resolved.model
+            except Exception:
+                pass
+
             # Combine data
             data = {
                 "name": name,
@@ -61,6 +69,7 @@ def create_animas_router() -> APIRouter:
                 "uptime_sec": proc_status.get("uptime_sec"),
                 "appearance": appearance,
                 "supervisor": anima_cfg.supervisor,
+                "model": model,
             }
             result.append(data)
 

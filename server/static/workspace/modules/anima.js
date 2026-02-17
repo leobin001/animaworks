@@ -33,6 +33,30 @@ function statusLabel(status) {
   return status.toLowerCase();
 }
 
+/**
+ * Map a full model name to a short display alias.
+ */
+function modelAlias(model) {
+  if (!model) return "";
+  const m = model.toLowerCase();
+  // A1: Claude models
+  if (m.includes("opus")) return "Opus";
+  if (m.includes("sonnet")) return "Sonnet";
+  if (m.includes("haiku")) return "Haiku";
+  // A2: OpenAI
+  if (m.includes("gpt-4o")) return "GPT-4o";
+  if (m.includes("gpt-4")) return "GPT-4";
+  if (m.includes("o3")) return "o3";
+  if (m.includes("o1")) return "o1";
+  // A2: Google
+  if (m.includes("gemini")) return "Gemini";
+  // B: Ollama / OSS
+  if (m.includes("ollama/")) return model.split("/").pop();
+  // Fallback: last segment
+  const parts = model.split("/");
+  return parts[parts.length - 1];
+}
+
 // ── Dropdown Rendering ──────────────────────
 
 function renderDropdown() {
@@ -98,6 +122,11 @@ function renderStatusPanel() {
   const statusStr = (rawStatus && typeof rawStatus === "object") ? (rawStatus.status || "offline") : (rawStatus || "offline");
   const dotClass = statusClassName(statusStr);
 
+  // Resolve model alias from animas list
+  const { animas } = getState();
+  const animaEntry = animas.find((a) => a.name === selectedAnima);
+  const alias = modelAlias(animaEntry?.model);
+
   // Build sections
   let sectionsHtml = "";
 
@@ -160,6 +189,7 @@ function renderStatusPanel() {
         <span class="status-dot ${dotClass}"></span>
         <span class="status-anima-name">${escapeHtml(selectedAnima)}</span>
         <span class="status-label">${escapeHtml(statusLabel(statusStr))}</span>
+        ${alias ? `<span class="status-model">${escapeHtml(alias)}</span>` : ""}
       </div>
       ${sectionsHtml}
     </div>
