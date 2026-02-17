@@ -1,6 +1,6 @@
 // ── Chat Page (Self-Contained) ──────────────
 import { api } from "../modules/api.js";
-import { escapeHtml, renderMarkdown, timeStr } from "../modules/state.js";
+import { escapeHtml, renderMarkdown, timeStr, smartTimestamp } from "../modules/state.js";
 import { streamChat } from "../shared/chat-stream.js";
 import { createLogger } from "../shared/logger.js";
 
@@ -292,6 +292,7 @@ async function _selectAnima(name) {
     _chatHistories[name] = conv.turns.map(t => ({
       role: t.role === "human" ? "user" : "assistant",
       text: t.content,
+      timestamp: t.timestamp || "",
     }));
   }
 
@@ -352,6 +353,9 @@ function _renderChat() {
   }
 
   messagesEl.innerHTML = history.map(m => {
+    const ts = m.timestamp ? smartTimestamp(m.timestamp) : "";
+    const tsHtml = ts ? `<span class="chat-ts">${escapeHtml(ts)}</span>` : "";
+
     if (m.role === "thinking") {
       return '<div class="chat-bubble thinking"><span class="thinking-animation">考え中</span></div>';
     }
@@ -366,9 +370,9 @@ function _renderChat() {
       const toolHtml = m.activeTool
         ? `<div class="tool-indicator"><span class="tool-spinner"></span>${escapeHtml(m.activeTool)} を実行中...</div>`
         : "";
-      return `<div class="chat-bubble assistant${streamClass}">${content}${toolHtml}</div>`;
+      return `<div class="chat-bubble assistant${streamClass}">${content}${toolHtml}${tsHtml}</div>`;
     }
-    return `<div class="chat-bubble user">${escapeHtml(m.text)}</div>`;
+    return `<div class="chat-bubble user">${escapeHtml(m.text)}${tsHtml}</div>`;
   }).join("");
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -434,8 +438,9 @@ async function _sendChat(message) {
   if (!_chatHistories[name]) _chatHistories[name] = [];
   const history = _chatHistories[name];
 
-  history.push({ role: "user", text: message });
-  const streamingMsg = { role: "assistant", text: "", streaming: true, activeTool: null };
+  const sendTs = new Date().toISOString();
+  history.push({ role: "user", text: message, timestamp: sendTs });
+  const streamingMsg = { role: "assistant", text: "", streaming: true, activeTool: null, timestamp: sendTs };
   history.push(streamingMsg);
   _renderChat();
 
