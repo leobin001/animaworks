@@ -27,28 +27,196 @@ def _normalize_text(text: str) -> str:
     return unicodedata.normalize("NFKC", text).lower()
 
 
+def _extract_bracket_keywords(desc_norm: str) -> list[str]:
+    """Extract keywords from 「」-delimited tokens."""
+    return re.findall(r"「(.+?)」", desc_norm)
+
+
+def _extract_comma_keywords(desc_norm: str) -> list[str]:
+    """Extract keywords by splitting on commas, periods, and newlines.
+
+    Used as fallback when no 「」 brackets are present.
+    Returns short phrases (2–20 chars) that are likely meaningful keywords.
+    """
+    segments = re.split(r"[、,。.\n]", desc_norm)
+    return [s.strip() for s in segments if 2 <= len(s.strip()) <= 20]
+
+
+def _match_tier1(desc_norm: str, message_norm: str) -> bool:
+    """Tier 1: Bracket keyword match (「」) + comma/delimiter keyword match.
+
+    Returns True if any keyword extracted from the description is a
+    substring of the message.
+    """
+    # Primary: 「」 bracket keywords
+    keywords = _extract_bracket_keywords(desc_norm)
+    if keywords:
+        return any(kw in message_norm for kw in keywords)
+    # Fallback: comma/delimiter separated keywords
+    keywords = _extract_comma_keywords(desc_norm)
+    if keywords:
+        return any(kw in message_norm for kw in keywords)
+    return False
+
+
+# Common English stop words to exclude from Tier 2 vocabulary matching.
+# These words appear in almost any text and would cause false positives.
+_TIER2_STOP_WORDS: frozenset[str] = frozenset({
+    "the", "and", "for", "with", "this", "that", "from", "use", "used",
+    "when", "into", "also", "can", "are", "was", "has", "have", "had",
+    "not", "but", "its", "any", "all", "each", "more", "such", "than",
+    "tool", "file", "new", "via", "etc", "using", "other",
+})
+
+
+def _match_tier2(desc_norm: str, message_norm: str) -> bool:
+    """Tier 2: Description vocabulary match.
+
+    Extracts words (≥3 chars) from description and checks if ≥2 appear
+    in the message. This handles English descriptions and natural-language
+    style descriptions without explicit keyword delimiters.
+
+    Stop words are filtered to avoid false positives from common English
+    words. Word boundary matching (``\\b``) is used for ASCII words to
+    prevent substring collisions (e.g. 'git' matching inside 'digital').
+    """
+    # Split on whitespace and punctuation, keep meaningful tokens
+    raw_words = re.findall(r"[\w]{3,}", desc_norm)
+    words = [w for w in raw_words if w not in _TIER2_STOP_WORDS]
+    if not words:
+        return False
+    # Require at least 2 word matches to avoid false positives
+    match_count = 0
+    for w in words:
+        if w.isascii():
+            # Word boundary match for ASCII to avoid substring collisions
+            if re.search(rf"\b{re.escape(w)}\b", message_norm):
+                match_count += 1
+        else:
+            # Substring match for CJK (no word boundaries in Japanese)
+            if w in message_norm:
+                match_count += 1
+    return match_count >= 2
+
+
 def match_skills_by_description(
     message: str,
     skills: list[SkillMeta],
+    *,
+    retriever: object | None = None,
+    anima_name: str = "",
 ) -> list[SkillMeta]:
-    """Return skills whose description keywords match the message.
+    """Return skills whose description matches the message (3-tier).
 
-    Keywords are extracted from 「」-delimited tokens in the description.
-    Skills without 「」 keywords are never matched (table display only).
+    Tier 1: 「」-delimited and comma/delimiter keyword substring match.
+    Tier 2: Description vocabulary match (≥2 words overlap).
+    Tier 3: Vector search via RAG retriever (semantic similarity).
+
+    Each tier is applied only to skills not yet matched by prior tiers.
+    Results are deduplicated and returned in tier priority order.
     """
     if not message:
         return []
     message_norm = _normalize_text(message)
     matched: list[SkillMeta] = []
+    matched_names: set[str] = set()
+    remaining: list[SkillMeta] = []
+
+    # ── Tier 1: Bracket / comma keyword match ──────────────
     for skill in skills:
         if not skill.description:
+            remaining.append(skill)
             continue
         desc_norm = _normalize_text(skill.description)
-        keywords = re.findall(r"「(.+?)」", desc_norm)
-        if not keywords:
-            continue
-        if any(kw in message_norm for kw in keywords):
+        if _match_tier1(desc_norm, message_norm):
             matched.append(skill)
+            matched_names.add(skill.name)
+        else:
+            remaining.append(skill)
+
+    # ── Tier 2: Description vocabulary match ───────────────
+    still_remaining: list[SkillMeta] = []
+    for skill in remaining:
+        if not skill.description:
+            still_remaining.append(skill)
+            continue
+        desc_norm = _normalize_text(skill.description)
+        if _match_tier2(desc_norm, message_norm):
+            if skill.name not in matched_names:
+                matched.append(skill)
+                matched_names.add(skill.name)
+        else:
+            still_remaining.append(skill)
+
+    # ── Tier 3: Vector search (semantic match) ─────────────
+    if retriever is not None and anima_name and still_remaining:
+        try:
+            vector_matched = _match_tier3_vector(
+                message, still_remaining, retriever, anima_name,
+            )
+            for skill in vector_matched:
+                if skill.name not in matched_names:
+                    matched.append(skill)
+                    matched_names.add(skill.name)
+        except Exception as e:
+            logger.warning("Tier 3 vector search failed: %s", e)
+
+    return matched
+
+
+def _match_tier3_vector(
+    message: str,
+    candidates: list[SkillMeta],
+    retriever: object,
+    anima_name: str,
+    top_k: int = 3,
+    min_score: float = 0.88,
+) -> list[SkillMeta]:
+    """Tier 3: Use RAG vector search to find semantically matching skills.
+
+    Searches the personal skills collection and matches results back to
+    candidate SkillMeta objects by file path / name.
+
+    Searches both the personal skills collection and the shared
+    common_skills collection (``shared_common_skills``) in ChromaDB.
+    """
+    from core.memory.rag.retriever import MemoryRetriever
+
+    if not isinstance(retriever, MemoryRetriever):
+        return []
+
+    # Search in 'skills' memory type (personal + shared common_skills)
+    results = retriever.search(
+        query=message,
+        anima_name=anima_name,
+        memory_type="skills",
+        top_k=top_k,
+        include_shared=True,
+    )
+
+    # Build path-to-skill lookup from candidates
+    candidate_by_path: dict[str, SkillMeta] = {}
+    for skill in candidates:
+        candidate_by_path[str(skill.path)] = skill
+        # Also index by filename stem for fuzzy matching
+        candidate_by_path[skill.path.stem] = skill
+        candidate_by_path[skill.name] = skill
+
+    matched: list[SkillMeta] = []
+    seen: set[str] = set()
+    for r in results:
+        if r.score < min_score:
+            continue
+        # Try to match by file_path or source_file metadata
+        file_path = r.metadata.get("file_path", "") or r.metadata.get("source_file", "")
+        skill = candidate_by_path.get(str(file_path))
+        if skill is None and file_path:
+            # Try stem matching from file_path
+            stem = Path(file_path).stem
+            skill = candidate_by_path.get(stem)
+        if skill and skill.name not in seen:
+            matched.append(skill)
+            seen.add(skill.name)
     return matched
 
 
@@ -107,8 +275,9 @@ class MemoryManager:
             self._indexer = MemoryIndexer(vector_store, anima_name, self.anima_dir)
             logger.debug("RAG indexer initialized for anima=%s", anima_name)
 
-            # Ensure shared_common_knowledge collection exists
+            # Ensure shared collections exist
             self._ensure_shared_knowledge_indexed(vector_store)
+            self._ensure_shared_skills_indexed(vector_store)
         except ImportError:
             logger.debug("RAG dependencies not installed, indexing disabled")
         except Exception as e:
@@ -144,6 +313,37 @@ class MemoryManager:
                 )
         except Exception as e:
             logger.warning("Failed to index shared common_knowledge: %s", e)
+
+    def _ensure_shared_skills_indexed(self, vector_store) -> None:
+        """Index common_skills/ into ``shared_common_skills`` collection.
+
+        Uses the existing hash-based dedup so repeated calls (once per
+        anima process) are effectively no-ops after the first indexing.
+        """
+        cs_dir = self.common_skills_dir
+        if not cs_dir.is_dir() or not any(cs_dir.glob("*.md")):
+            logger.debug("No common_skills files found, skipping shared skills indexing")
+            return
+
+        try:
+            from core.memory.rag import MemoryIndexer
+            from core.paths import get_data_dir
+
+            data_dir = get_data_dir()
+            shared_indexer = MemoryIndexer(
+                vector_store,
+                anima_name="shared",
+                anima_dir=data_dir,
+                collection_prefix="shared",
+                embedding_model=self._indexer.embedding_model if self._indexer else None,
+            )
+            indexed = shared_indexer.index_directory(cs_dir, "common_skills")
+            if indexed > 0:
+                logger.info(
+                    "Indexed %d chunks into shared_common_skills", indexed,
+                )
+        except Exception as e:
+            logger.warning("Failed to index shared common_skills: %s", e)
 
     def _get_indexer(self):
         """Return the RAG indexer, initializing it on first call."""

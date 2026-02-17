@@ -1,9 +1,10 @@
 ---
 name: tool-creator
 description: >-
-  新しいPythonツールモジュールを正しいインターフェースで作成するためのメタスキル。
-  外部API連携、データ処理、自動化タスク等のカスタムツールを作りたいときに使用する。
-  「ツールを作成」「ツール化」「新しいツール」「カスタムツール」
+  AnimaWorks用のPythonツールモジュール(core/tools/)を正しいインターフェースで作成するメタスキル。
+  ExternalToolDispatcher連携、APIキー管理、ToolHandler登録、permissions.md許可設定の
+  手順を提供する。Web API連携・外部サービス統合のカスタムツール開発時に使用。
+  「ツールを作成」「ツール化」「新しいツール」「カスタムツール」「Python ツール」
 ---
 
 # tool-creator

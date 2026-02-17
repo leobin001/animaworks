@@ -1,9 +1,10 @@
 ---
 name: newstaff
 description: >-
-  新しいDigital Animaを作成する。キャラクターシートを1ファイルで作成し、create_animaツールで一括作成する。
-  新Animaは初回起動時にbootstrapで自己整備する。
-  「新しい社員を作って」「人を雇って」「新しい社員」「雇用」
+  AnimaWorks組織に新しいDigital Animaを雇用・作成するスキル。
+  キャラクターシート(Markdown)をヒアリングに基づき作成し、create_animaツールで
+  identity/injection/permissions等を一括生成する。作成後はbootstrapで自己整備。
+  「新しい社員を作って」「人を雇って」「新しい社員」「雇用」「Anima作成」「採用」
 ---
 
 # スキル: 新しい社員雇用
