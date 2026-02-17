@@ -529,6 +529,7 @@ class AgentCore:
             personal_tools=self._personal_tools,
             priming_section=priming_section,
             execution_mode=mode,
+            message=prompt,
         )
         logger.debug("System prompt assembled, length=%d", len(system_prompt))
         if shortterm.has_pending():
@@ -631,6 +632,7 @@ class AgentCore:
                     personal_tools=self._personal_tools,
                     priming_section=priming_section,  # Reuse priming from initial session
                     execution_mode=mode,
+                    message=prompt,
                 ),
                 shortterm,
             )
@@ -721,6 +723,7 @@ class AgentCore:
             personal_tools=self._personal_tools,
             priming_section=priming_section,
             execution_mode=mode,
+            message=prompt,
         )
         if shortterm.has_pending():
             system_prompt = inject_shortterm(system_prompt, shortterm)
@@ -842,6 +845,7 @@ class AgentCore:
                     personal_tools=self._personal_tools,
                     priming_section=priming_section,
                     execution_mode=mode,
+                    message=prompt,
                 )
 
                 await asyncio.sleep(retry_delay)
@@ -893,6 +897,7 @@ class AgentCore:
                     personal_tools=self._personal_tools,
                     priming_section=priming_section,  # Reuse priming from initial session
                     execution_mode=mode,
+                    message=prompt,
                 ),
                 shortterm,
             )
