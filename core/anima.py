@@ -505,12 +505,12 @@ class DigitalAnima:
                         if chunk.get("type") == "tool_start":
                             journal.write_tool_start(
                                 tool=chunk.get("tool_name", ""),
-                                args_summary=chunk.get("tool_name", ""),
+                                args_summary="",
                             )
                         if chunk.get("type") == "tool_end":
                             journal.write_tool_end(
                                 tool=chunk.get("tool_name", ""),
-                                result_summary=chunk.get("tool_name", ""),
+                                result_summary="",
                             )
 
                         if chunk.get("type") == "cycle_done":

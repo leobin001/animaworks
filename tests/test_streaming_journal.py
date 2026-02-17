@@ -15,12 +15,13 @@ Tests cover:
 - Buffered write behaviour
 - Corrupted JSONL line handling
 - Edge cases (empty journal, no orphan, double open, finalize-then-close)
+- AnimaRunner._recover_streaming_journal() integration
 """
 
 import json
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -301,6 +302,154 @@ class TestDoubleOpen:
         assert recovery.trigger == "second-session"
         assert recovery.recovered_text == "second-data"
         assert "first-data" not in recovery.recovered_text
+
+
+# ── AnimaRunner._recover_streaming_journal() Integration ───────────
+
+
+def _make_runner(anima_dir: Path) -> "AnimaRunner":
+    """Create a minimal AnimaRunner with mocked anima for recovery tests.
+
+    Sets only the fields that ``_recover_streaming_journal()`` actually
+    reads: ``anima_name``, ``_anima_dir``, and ``anima`` (with
+    ``model_config``).
+    """
+    from core.supervisor.runner import AnimaRunner
+
+    # AnimaRunner.__init__ requires socket_path / animas_dir / shared_dir,
+    # but _recover_streaming_journal only uses self._anima_dir and
+    # self.anima (for model_config).  We supply the real anima_dir via
+    # animas_dir so that self._anima_dir resolves correctly.
+    runner = AnimaRunner(
+        anima_name=anima_dir.name,
+        socket_path=anima_dir / "sock",
+        animas_dir=anima_dir.parent,
+        shared_dir=anima_dir.parent / "shared",
+    )
+    mock_anima = MagicMock()
+    mock_anima.model_config = MagicMock()
+    runner.anima = mock_anima
+    return runner
+
+
+class TestRecoverStreamingJournal:
+    """Integration tests for AnimaRunner._recover_streaming_journal().
+
+    Verifies that the runner correctly bridges StreamingJournal recovery
+    data into ConversationMemory and ActivityLogger.
+    """
+
+    def test_recover_saves_to_conversation_memory(
+        self,
+        journal: StreamingJournal,
+        anima_dir: Path,
+    ):
+        """Orphaned journal text is saved to ConversationMemory with crash marker.
+
+        Create an orphaned journal (open, write, close without finalize),
+        then invoke ``_recover_streaming_journal`` and verify that
+        ConversationMemory.append_turn() receives the recovered text
+        suffixed with the crash marker string.
+        """
+        # Create orphaned journal
+        journal.open(trigger="chat", from_person="tester", session_id="s-1")
+        with patch("core.memory.streaming_journal._FLUSH_SIZE_CHARS", 0):
+            journal.write_text("partial response")
+        journal.close()
+
+        runner = _make_runner(anima_dir)
+        mock_conv = MagicMock()
+
+        with patch(
+            "core.memory.conversation.ConversationMemory",
+            return_value=mock_conv,
+        ) as conv_cls, patch(
+            "core.memory.activity.ActivityLogger",
+        ):
+            runner._recover_streaming_journal()
+
+        # ConversationMemory was instantiated with anima_dir and model_config
+        conv_cls.assert_called_once_with(anima_dir, runner.anima.model_config)
+
+        # append_turn received the recovered text + crash marker
+        mock_conv.append_turn.assert_called_once()
+        call_args = mock_conv.append_turn.call_args
+        assert call_args[0][0] == "assistant"
+        saved_text = call_args[0][1]
+        assert "partial response" in saved_text
+        assert "[プロセスクラッシュにより応答が中断されました]" in saved_text
+
+        # save() was called after append_turn
+        mock_conv.save.assert_called_once()
+
+    def test_recover_logs_to_activity_logger(
+        self,
+        journal: StreamingJournal,
+        anima_dir: Path,
+    ):
+        """Crash recovery event is logged via ActivityLogger.log().
+
+        Verify that ActivityLogger.log() is called with event_type "error",
+        a summary containing the crash message, and metadata containing
+        recovered_chars, trigger, tool_calls count, from_person, and
+        timing information.
+        """
+        # Create orphaned journal with tool call
+        journal.open(trigger="heartbeat", from_person="cron")
+        with patch("core.memory.streaming_journal._FLUSH_SIZE_CHARS", 0):
+            journal.write_text("some output")
+        journal.write_tool_start("web_search", args_summary="q=hello")
+        journal.write_tool_end("web_search", result_summary="2 results")
+        journal.close()
+
+        runner = _make_runner(anima_dir)
+        mock_activity = MagicMock()
+
+        with patch(
+            "core.memory.conversation.ConversationMemory",
+            return_value=MagicMock(),
+        ), patch(
+            "core.memory.activity.ActivityLogger",
+            return_value=mock_activity,
+        ) as activity_cls:
+            runner._recover_streaming_journal()
+
+        # ActivityLogger was instantiated with anima_dir
+        activity_cls.assert_called_once_with(anima_dir)
+
+        # log() was called with event_type "error"
+        mock_activity.log.assert_called_once()
+        call_args = mock_activity.log.call_args
+        assert call_args[0][0] == "error"
+
+        # Verify keyword arguments
+        assert "プロセスクラッシュ" in call_args[1]["summary"]
+
+        meta = call_args[1]["meta"]
+        assert meta["recovered_chars"] == len("some output")
+        assert meta["trigger"] == "heartbeat"
+        assert meta["tool_calls"] == 1
+        assert meta["from_person"] == "cron"
+        assert "started_at" in meta
+        assert "last_event_at" in meta
+
+    def test_recover_no_orphan_noop(self, anima_dir: Path):
+        """When no orphaned journal exists, nothing is called.
+
+        Neither ConversationMemory nor ActivityLogger should be
+        instantiated when there is no journal file to recover.
+        """
+        runner = _make_runner(anima_dir)
+
+        with patch(
+            "core.memory.conversation.ConversationMemory",
+        ) as conv_cls, patch(
+            "core.memory.activity.ActivityLogger",
+        ) as activity_cls:
+            runner._recover_streaming_journal()
+
+        conv_cls.assert_not_called()
+        activity_cls.assert_not_called()
 
 
 if __name__ == "__main__":
