@@ -535,18 +535,26 @@ class TestEnhancedSkillInjectionE2E:
         memory.list_skill_metas.return_value = [skill_meta]
         memory.list_common_skill_metas.return_value = []
 
+        def fake_load_prompt(name: str, **kwargs) -> str:
+            if name == "skills_guide":
+                return (
+                    "## あなたのスキル\n\n"
+                    "| スキル名 | 概要 |\n|---------|------|\n"
+                    + kwargs.get("skill_lines", "")
+                )
+            return ""
+
         # No retriever → Tier 3 skipped
         with (
-            patch("core.prompt.builder.load_prompt", return_value=""),
+            patch("core.prompt.builder.load_prompt", side_effect=fake_load_prompt),
             patch("core.prompt.builder._build_org_context", return_value=""),
             patch("core.prompt.builder._discover_other_animas", return_value=[]),
             patch("core.prompt.builder._build_messaging_section", return_value=""),
         ):
             prompt = build_system_prompt(memory, message="internal tool please", retriever=None)
 
-        # Tier 2 may or may not match; the key is no crash
-        # This test just verifies graceful behavior
-        assert "obscure-skill" in prompt  # at minimum in table
+        # The key is no crash (graceful degradation). Skill appears in table.
+        assert "obscure-skill" in prompt
 
     def test_mixed_tiers_correct_injection(self, tmp_path: Path):
         """Multiple skills across different tiers all get injected correctly."""

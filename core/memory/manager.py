@@ -59,19 +59,43 @@ def _match_tier1(desc_norm: str, message_norm: str) -> bool:
     return False
 
 
+# Common English stop words to exclude from Tier 2 vocabulary matching.
+# These words appear in almost any text and would cause false positives.
+_TIER2_STOP_WORDS: frozenset[str] = frozenset({
+    "the", "and", "for", "with", "this", "that", "from", "use", "used",
+    "when", "into", "also", "can", "are", "was", "has", "have", "had",
+    "not", "but", "its", "any", "all", "each", "more", "such", "than",
+    "tool", "file", "new", "via", "etc", "using", "other",
+})
+
+
 def _match_tier2(desc_norm: str, message_norm: str) -> bool:
     """Tier 2: Description vocabulary match.
 
     Extracts words (≥3 chars) from description and checks if ≥2 appear
     in the message. This handles English descriptions and natural-language
     style descriptions without explicit keyword delimiters.
+
+    Stop words are filtered to avoid false positives from common English
+    words. Word boundary matching (``\\b``) is used for ASCII words to
+    prevent substring collisions (e.g. 'git' matching inside 'digital').
     """
     # Split on whitespace and punctuation, keep meaningful tokens
-    words = re.findall(r"[\w]{3,}", desc_norm)
+    raw_words = re.findall(r"[\w]{3,}", desc_norm)
+    words = [w for w in raw_words if w not in _TIER2_STOP_WORDS]
     if not words:
         return False
     # Require at least 2 word matches to avoid false positives
-    match_count = sum(1 for w in words if w in message_norm)
+    match_count = 0
+    for w in words:
+        if w.isascii():
+            # Word boundary match for ASCII to avoid substring collisions
+            if re.search(rf"\b{re.escape(w)}\b", message_norm):
+                match_count += 1
+        else:
+            # Substring match for CJK (no word boundaries in Japanese)
+            if w in message_norm:
+                match_count += 1
     return match_count >= 2
 
 
@@ -150,8 +174,11 @@ def _match_tier3_vector(
 ) -> list[SkillMeta]:
     """Tier 3: Use RAG vector search to find semantically matching skills.
 
-    Searches the skills collection and matches results back to candidate
-    SkillMeta objects by file path.
+    Searches the personal skills collection and matches results back to
+    candidate SkillMeta objects by file path / name.
+
+    Note: Common skills are not indexed in ChromaDB, so Tier 3 only
+    operates on personal skills.  Common skills rely on Tier 1/2 matching.
     """
     from core.memory.rag.retriever import MemoryRetriever
 
@@ -165,19 +192,6 @@ def _match_tier3_vector(
         memory_type="skills",
         top_k=top_k,
     )
-
-    # Also search shared common knowledge for common skills
-    try:
-        shared_results = retriever.search(
-            query=message,
-            anima_name=anima_name,
-            memory_type="common_knowledge",
-            top_k=top_k,
-            include_shared=True,
-        )
-        results.extend(shared_results)
-    except Exception:
-        pass  # shared collection may not exist
 
     # Build path-to-skill lookup from candidates
     candidate_by_path: dict[str, SkillMeta] = {}

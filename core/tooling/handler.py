@@ -148,13 +148,9 @@ def _validate_skill_format(content: str) -> str:
     if "description" not in frontmatter:
         messages.append("`description` フィールドが必要です。")
 
-    # If required fields are missing, return errors immediately
-    if messages:
-        return "\n".join(messages)
-
-    # ── Description quality check ──
+    # ── Description quality check (only if description exists) ──
     desc = str(frontmatter.get("description", ""))
-    if "「" not in desc or "」" not in desc:
+    if desc and ("「" not in desc or "」" not in desc):
         messages.append(
             "descriptionに「」キーワードがありません。"
             "自動マッチング精度が低下する可能性があります。"
@@ -450,7 +446,7 @@ class ToolHandler:
             result = f"{result}\n\n{episode_warning}"
 
         # Validate skill file format (soft validation: warn but don't block)
-        if rel.startswith("skills/") and rel.endswith(".md"):
+        if (rel.startswith("skills/") or rel.startswith("common_skills/")) and rel.endswith(".md"):
             validation_msg = _validate_skill_format(args["content"])
             if validation_msg:
                 result = f"{result}\n\n⚠️ スキルフォーマット検証:\n{validation_msg}"

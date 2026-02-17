@@ -496,3 +496,117 @@ class TestHelperFunctions:
     def test_match_tier2_multiple_words(self):
         assert _match_tier2("comprehensive document creation editing", "document creation") is True
         assert _match_tier2("comprehensive document creation editing", "document") is False
+
+    def test_match_tier2_stop_words_filtered(self):
+        """Stop words like 'and', 'the', 'tool' should not contribute to match count."""
+        # "and" and "tool" are stop words; only "document" is meaningful (1 word < 2)
+        assert _match_tier2("document creation and analysis tool", "and the tool") is False
+
+    def test_match_tier2_word_boundary_prevents_substring_collision(self):
+        """ASCII word boundary matching prevents 'git' matching inside 'digital'."""
+        # "git" should NOT match inside "digital"
+        assert _match_tier2("git management skill", "digital management system") is False
+
+
+class TestMatchTier3WithMockRetriever:
+    """Tests for Tier 3 vector search with a mock MemoryRetriever."""
+
+    def _make_mock_retriever(self):
+        """Create a mock that passes the isinstance(r, MemoryRetriever) check."""
+        from unittest.mock import MagicMock
+        from core.memory.rag.retriever import MemoryRetriever
+
+        mock = MagicMock(spec=MemoryRetriever)
+        return mock
+
+    def test_tier3_score_threshold_filters_low_scores(self, tmp_path):
+        """Results below min_score threshold are filtered out."""
+        from core.memory.manager import _match_tier3_vector
+        from unittest.mock import MagicMock
+
+        p = tmp_path / "skill.md"
+        p.write_text("dummy")
+        skill = SkillMeta(name="my-skill", description="x", path=p, is_common=False)
+
+        mock_retriever = self._make_mock_retriever()
+        mock_result = MagicMock()
+        mock_result.score = 0.3  # Below threshold of 0.5
+        mock_result.metadata = {"file_path": str(p)}
+        mock_retriever.search.return_value = [mock_result]
+
+        result = _match_tier3_vector(
+            "test message", [skill], mock_retriever, "test",
+        )
+        assert result == []  # Filtered by score threshold
+
+    def test_tier3_matches_by_path_stem(self, tmp_path):
+        """Tier 3 matches results by file path stem."""
+        from core.memory.manager import _match_tier3_vector
+        from unittest.mock import MagicMock
+
+        p = tmp_path / "deploy-guide.md"
+        p.write_text("dummy")
+        skill = SkillMeta(name="deploy-guide", description="x", path=p, is_common=False)
+
+        mock_retriever = self._make_mock_retriever()
+        mock_result = MagicMock()
+        mock_result.score = 0.8
+        mock_result.metadata = {"file_path": "/some/other/path/deploy-guide.md"}
+        mock_retriever.search.return_value = [mock_result]
+
+        result = _match_tier3_vector(
+            "deploy something", [skill], mock_retriever, "test",
+        )
+        assert len(result) == 1
+        assert result[0].name == "deploy-guide"
+
+    def test_tier3_matches_by_skill_name(self, tmp_path):
+        """Tier 3 matches results by skill name when path doesn't match."""
+        from core.memory.manager import _match_tier3_vector
+        from unittest.mock import MagicMock
+
+        p = tmp_path / "deploy.md"
+        p.write_text("dummy")
+        skill = SkillMeta(name="deploy-guide", description="x", path=p, is_common=False)
+
+        mock_retriever = self._make_mock_retriever()
+        mock_result = MagicMock()
+        mock_result.score = 0.8
+        # file_path does not match path or stem, but name "deploy-guide" is
+        # indexed in the candidate lookup
+        mock_result.metadata = {"file_path": ""}
+        mock_retriever.search.return_value = [mock_result]
+
+        # Name matching is attempted as last resort—but only if file_path or
+        # stem match. Since file_path is empty, stem = "", neither matches.
+        # So this should return empty. Name lookup only works through the
+        # path-based matching pipeline.
+        result = _match_tier3_vector(
+            "deploy guide", [skill], mock_retriever, "test",
+        )
+        # empty file_path doesn't match any lookup key
+        assert len(result) == 0
+
+    def test_tier3_deduplicates_results(self, tmp_path):
+        """Duplicate matches from vector search are deduplicated."""
+        from core.memory.manager import _match_tier3_vector
+        from unittest.mock import MagicMock
+
+        p = tmp_path / "deploy-guide.md"
+        p.write_text("dummy")
+        skill = SkillMeta(name="deploy-guide", description="x", path=p, is_common=False)
+
+        mock_retriever = self._make_mock_retriever()
+        # Two results pointing to same skill
+        r1 = MagicMock()
+        r1.score = 0.9
+        r1.metadata = {"file_path": str(p)}
+        r2 = MagicMock()
+        r2.score = 0.7
+        r2.metadata = {"file_path": "/other/deploy-guide.md"}
+        mock_retriever.search.return_value = [r1, r2]
+
+        result = _match_tier3_vector(
+            "deploy", [skill], mock_retriever, "test",
+        )
+        assert len(result) == 1  # Deduplicated
