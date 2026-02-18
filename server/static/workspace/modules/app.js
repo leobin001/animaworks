@@ -16,7 +16,7 @@ import { createNavGrid } from "./navigation.js";
 import { initMovement, registerCharacter, updateMovements, moveTo, moveToHome, stopMovement, isMoving } from "./movement.js";
 import { computePOIs, initIdleBehaviors, updateIdleBehaviors, cancelBehavior } from "./idle_behavior.js";
 import { initInteractions, showMessageEffect, showConversation, updateInteractions } from "./interactions.js";
-import { initTimeline, addTimelineEvent, loadHistory } from "./timeline.js";
+import { initTimeline, addTimelineEvent, loadHistory, localISOString } from "./timeline.js";
 import { initMessagePopup, isVisible as isMessagePopupVisible, hide as hideMessagePopup } from "./message-popup.js";
 import { playReveal } from "./reveal.js";
 import { streamChat } from "../../shared/chat-stream.js";
@@ -815,7 +815,7 @@ function setupWebSocket() {
       id: Date.now().toString(),
       type: "message",
       anima: `${data.from_person} → ${data.to_person}`,
-      ts: new Date().toISOString(),
+      ts: data.ts || localISOString(),
       summary: `${data.from_person} → ${data.to_person}: ${data.summary || ""}`,
       meta: {
         text: data.summary || "",
@@ -836,7 +836,7 @@ function setupWebSocket() {
       id: Date.now().toString(),
       type: "heartbeat",
       anima: data.name,
-      ts: new Date().toISOString(),
+      ts: data.ts || localISOString(),
       summary: data.summary || "heartbeat completed",
     });
   }));
@@ -847,7 +847,7 @@ function setupWebSocket() {
       id: Date.now().toString(),
       type: "cron",
       anima: data.name,
-      ts: new Date().toISOString(),
+      ts: data.ts || localISOString(),
       summary: data.summary || `cron: ${data.job || ""}`,
     });
   }));
@@ -876,7 +876,7 @@ function setupWebSocket() {
       id: Date.now().toString(),
       type: "board",
       anima: from,
-      ts: data.ts || new Date().toISOString(),
+      ts: data.ts || localISOString(),
       summary: `#${channel}: ${from} — ${text}`,
       meta: {
         channel,
@@ -885,6 +885,52 @@ function setupWebSocket() {
         source: data.source || "",
       },
     });
+  }));
+
+  // ── chat.response — user chat messages ──
+  wsUnsubscribers.push(onEvent("chat.response", (data) => {
+    const animaName = data.anima || data.name || "";
+    const response = data.response || data.text || "";
+    if (animaName) {
+      addTimelineEvent({
+        id: Date.now().toString(),
+        type: "response_sent",
+        anima: animaName,
+        ts: data.ts || localISOString(),
+        summary: `応答: ${response.slice(0, 100)}`,
+      });
+    }
+  }));
+
+  // ── anima.proactive_message — autonomous outbound messages ──
+  wsUnsubscribers.push(onEvent("anima.proactive_message", (data) => {
+    const animaName = data.name || data.anima || "";
+    const summary = data.summary || data.message || "";
+    if (animaName) {
+      addTimelineEvent({
+        id: Date.now().toString(),
+        type: "dm_sent",
+        anima: animaName,
+        ts: data.ts || localISOString(),
+        summary: summary.slice(0, 100),
+      });
+    }
+  }));
+
+  // ── anima.notification — human notifications ──
+  wsUnsubscribers.push(onEvent("anima.notification", (data) => {
+    const animaName = data.name || data.anima || "";
+    const subject = data.subject || "";
+    const body = data.body || "";
+    if (animaName) {
+      addTimelineEvent({
+        id: Date.now().toString(),
+        type: "human_notify",
+        anima: animaName,
+        ts: data.ts || localISOString(),
+        summary: subject || body.slice(0, 100),
+      });
+    }
   }));
 
   wsUnsubscribers.push(onEvent("anima.bootstrap", (data) => {

@@ -21,6 +21,34 @@
 import { showMessage as showMessagePopup } from "./message-popup.js";
 import { getIcon, getDisplaySummary, normalizeEvent } from "../../shared/activity-types.js";
 
+// ── Timestamp helper ──────────────────────────────
+
+/**
+ * Generate a naive local ISO string (no "Z" suffix) matching the server's
+ * ``datetime.now().isoformat()`` format.  Used for real-time events so they
+ * sort correctly alongside historical entries from the API.
+ * @returns {string} e.g. "2026-02-18T21:41:02.123"
+ */
+export function localISOString() {
+  const d = new Date();
+  const pad = (n, len = 2) => String(n).padStart(len, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
+    `.${pad(d.getMilliseconds(), 3)}`
+  );
+}
+
+/**
+ * Compare two ISO timestamp strings by their Date value (newest first).
+ * Handles both naive-local ("2026-02-18T21:41:02") and UTC ("...Z") formats.
+ */
+function _tsDescending(a, b) {
+  const ta = new Date(a.ts || 0).getTime();
+  const tb = new Date(b.ts || 0).getTime();
+  return tb - ta;
+}
+
 // ── Module state ───────────────────────────────────
 
 /** @type {TimelineEvent[]} */
@@ -394,12 +422,8 @@ export async function loadHistory(hours = 48) {
       }
     }
 
-    // Sort newest first
-    _events.sort((a, b) => {
-      const ta = a.ts || "";
-      const tb = b.ts || "";
-      return tb.localeCompare(ta);
-    });
+    // Sort newest first (Date comparison to handle mixed tz formats)
+    _events.sort(_tsDescending);
 
     // Cap
     if (_events.length > MAX_EVENTS) {
@@ -451,7 +475,7 @@ async function _loadMore() {
       }
     }
 
-    _events.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
+    _events.sort(_tsDescending);
 
     if (_countEl) {
       _countEl.textContent = _totalCount > 0 ? `${_events.length}/${_totalCount}` : _events.length.toString();
