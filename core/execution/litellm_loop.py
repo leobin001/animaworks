@@ -23,7 +23,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from core.prompt.context import ContextTracker
+from core.prompt.context import CHARS_PER_TOKEN, ContextTracker, _resolve_context_window
 from core.execution._session import build_continuation_prompt, handle_session_chaining
 from core.execution.base import BaseExecutor, ExecutionResult
 from core.memory import MemoryManager
@@ -266,11 +266,41 @@ class LiteLLMExecutor(BaseExecutor):
                 "A2 tool loop iteration=%d messages=%d",
                 iteration, len(messages),
             )
+
+            # ── Pre-flight: clamp max_tokens to fit context window ──
+            ctx_window = _resolve_context_window(self._model_config.model)
+            msg_chars = sum(len(str(m.get("content", ""))) for m in messages)
+            tool_chars = len(_json.dumps(tools)) if tools else 0
+            est_input = (msg_chars + tool_chars) // CHARS_PER_TOKEN
+            available = ctx_window - est_input
+            configured_max = llm_kwargs.get("max_tokens", 4096)
+            iter_kwargs = llm_kwargs
+
+            if available < configured_max:
+                if available - 128 < 256:
+                    logger.error(
+                        "Prompt too large for context window: "
+                        "~%d tokens input, %d window",
+                        est_input, ctx_window,
+                    )
+                    return ExecutionResult(
+                        text=f"[Error: prompt too large for "
+                        f"{self._model_config.model} "
+                        f"(~{est_input} tokens, window {ctx_window})]",
+                    )
+                clamped = available - 128
+                logger.info(
+                    "Clamping max_tokens %d -> %d "
+                    "(est_input ~%d, window %d)",
+                    configured_max, clamped, est_input, ctx_window,
+                )
+                iter_kwargs = {**llm_kwargs, "max_tokens": clamped}
+
             try:
                 response = await litellm.acompletion(
                     messages=messages,
                     tools=tools,
-                    **llm_kwargs,
+                    **iter_kwargs,
                 )
             except Exception as e:
                 logger.exception("LiteLLM API error")
