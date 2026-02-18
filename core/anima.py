@@ -22,7 +22,7 @@ from core.memory.activity import ActivityLogger
 from core.memory.streaming_journal import StreamingJournal
 from core.memory.conversation import ConversationMemory
 from core.memory import MemoryManager
-from core.messenger import Messenger
+from core.messenger import InboxItem, Messenger
 from core.paths import load_prompt
 from core.schemas import CycleResult, AnimaStatus, VALID_EMOTIONS
 
@@ -752,7 +752,7 @@ class DigitalAnima:
                 # Read unread messages but do NOT archive yet.
                 # Messages stay in inbox until the agent replies to each sender.
                 unread_count = 0
-                inbox_items: list = []
+                inbox_items: list[InboxItem] = []
                 senders: set[str] = set()
                 if self.messenger.has_unread():
                     inbox_items = self.messenger.receive_with_paths()
