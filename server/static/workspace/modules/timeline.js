@@ -12,10 +12,10 @@
  * @typedef {Object} TimelineEvent
  * @property {string}  id         — unique ID (timestamp-based)
  * @property {string}  type       — "message" | "board" | "heartbeat" | "cron" | "chat" | "status"
- * @property {string[]} animas   — related Anima names
- * @property {string}  timestamp  — ISO 8601
+ * @property {string}  anima      — related Anima name
+ * @property {string}  ts         — ISO 8601
  * @property {string}  summary    — display text
- * @property {Object}  [metadata] — extra data for replay
+ * @property {Object}  [meta]     — extra data for replay
  */
 
 import { showMessage as showMessagePopup } from "./message-popup.js";
@@ -226,7 +226,7 @@ function _createEventElement(evt) {
   // Time
   const timeEl = document.createElement("span");
   timeEl.className = "tl-event-time";
-  timeEl.textContent = _formatTime(evt.timestamp);
+  timeEl.textContent = _formatTime(evt.ts);
   timeEl.style.cssText = "flex-shrink:0; color:#aaa; font-size:0.75rem; min-width:45px;";
 
   // Icon
@@ -235,10 +235,10 @@ function _createEventElement(evt) {
   iconEl.textContent = TYPE_ICONS[evt.type] || "\u2022";
   iconEl.style.cssText = "flex-shrink:0;";
 
-  // Animas
+  // Anima
   const animasEl = document.createElement("span");
   animasEl.className = "tl-event-animas";
-  animasEl.textContent = evt.animas.join(", ");
+  animasEl.textContent = evt.anima || "";
   animasEl.style.cssText = "font-weight:600; color:#2563eb; flex-shrink:0; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
 
   // Summary
@@ -275,7 +275,7 @@ function _formatTime(isoString) {
 // ── Replay ─────────────────────────────────────────
 
 function _replayEvent(event, el) {
-  const { type, animas, metadata } = event;
+  const { type, anima, meta } = event;
 
   // Visual feedback
   el.classList.add("replaying");
@@ -285,21 +285,21 @@ function _replayEvent(event, el) {
 
   switch (type) {
     case "message":
-      if (_interactionManager && animas.length >= 2) {
+      if (_interactionManager && anima && meta && meta.to_person) {
         _interactionManager.showMessageEffect(
-          animas[0],
-          animas[1],
-          (metadata && metadata.text) || "",
+          anima,
+          meta.to_person,
+          (meta && meta.text) || "",
         );
       }
-      if (metadata && metadata.message_id) {
-        showMessagePopup(metadata.message_id);
+      if (meta && meta.message_id) {
+        showMessagePopup(meta.message_id);
       }
       break;
 
     case "chat":
-      if (_highlightDesk && animas.length >= 1) {
-        _highlightDesk(animas[0]);
+      if (_highlightDesk && anima) {
+        _highlightDesk(anima);
         setTimeout(() => {
           if (_clearHighlight) _clearHighlight();
         }, 3000);
@@ -307,8 +307,8 @@ function _replayEvent(event, el) {
       break;
 
     case "board":
-      if (_highlightDesk && animas.length >= 1) {
-        _highlightDesk(animas[0]);
+      if (_highlightDesk && anima) {
+        _highlightDesk(anima);
         setTimeout(() => {
           if (_clearHighlight) _clearHighlight();
         }, 3000);
@@ -317,8 +317,8 @@ function _replayEvent(event, el) {
 
     case "heartbeat":
     case "cron":
-      if (_highlightDesk && animas.length >= 1) {
-        _highlightDesk(animas[0]);
+      if (_highlightDesk && anima) {
+        _highlightDesk(anima);
         setTimeout(() => {
           if (_clearHighlight) _clearHighlight();
         }, 3000);
@@ -383,7 +383,7 @@ export async function loadHistory(hours = 48) {
 
     for (const evt of events) {
       if (!evt.id) {
-        evt.id = evt.timestamp || Date.now().toString();
+        evt.id = evt.ts || Date.now().toString();
       }
       _events.push(evt);
     }
@@ -400,8 +400,8 @@ export async function loadHistory(hours = 48) {
 
     // Sort newest first
     _events.sort((a, b) => {
-      const ta = a.timestamp || "";
-      const tb = b.timestamp || "";
+      const ta = a.ts || "";
+      const tb = b.ts || "";
       return tb.localeCompare(ta);
     });
 
@@ -439,7 +439,7 @@ async function _loadMore() {
 
     for (const evt of newEvents) {
       if (!evt.id) {
-        evt.id = evt.timestamp || Date.now().toString();
+        evt.id = evt.ts || Date.now().toString();
       }
       _events.push(evt);
     }
@@ -454,7 +454,7 @@ async function _loadMore() {
       }
     }
 
-    _events.sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+    _events.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
 
     if (_countEl) {
       _countEl.textContent = _totalCount > 0 ? `${_events.length}/${_totalCount}` : _events.length.toString();

@@ -256,6 +256,21 @@ class TestReloadAnimas:
 # ── GET /activity/recent ─────────────────────────────────
 
 
+def _write_activity(animas_dir: Path, name: str, entries: list[dict]) -> None:
+    """Write test activity entries to {animas_dir}/{name}/activity_log/{date}.jsonl."""
+    log_dir = animas_dir / name / "activity_log"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    by_date: dict[str, list[dict]] = {}
+    for entry in entries:
+        date_str = entry["ts"][:10]
+        by_date.setdefault(date_str, []).append(entry)
+    for date_str, date_entries in by_date.items():
+        path = log_dir / f"{date_str}.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            for e in date_entries:
+                f.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+
 class TestRecentActivity:
     async def test_activity_no_animas(self):
         app = _make_test_app(anima_names=[])
@@ -264,6 +279,10 @@ class TestRecentActivity:
             resp = await client.get("/api/activity/recent")
         data = resp.json()
         assert data["events"] == []
+        assert data["total"] == 0
+        assert data["offset"] == 0
+        assert data["limit"] == 200
+        assert data["has_more"] is False
 
     async def test_activity_with_hours_param(self):
         app = _make_test_app(anima_names=[])
@@ -273,11 +292,17 @@ class TestRecentActivity:
         assert resp.status_code == 200
 
     async def test_activity_with_anima_filter(self, tmp_path):
+        from datetime import datetime, timezone
+
         animas_dir = tmp_path / "animas"
         animas_dir.mkdir()
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir()
 
+        now = datetime.now(timezone.utc)
+        _write_activity(animas_dir, "alice", [
+            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "巡回", "content": "", "from": "", "to": "", "channel": "", "tool": "", "via": "", "meta": {}},
+        ])
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -287,29 +312,28 @@ class TestRecentActivity:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/activity/recent?anima=alice")
         assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] >= 1
+        assert data["events"][0]["anima"] == "alice"
+        assert data["events"][0]["type"] == "heartbeat_start"
 
 
-# ── Activity endpoint: heartbeat & cron log integration ──
+# ── Activity endpoint: ActivityLogger JSONL integration ──
 
 
 class TestActivityEndpoint:
-    """Tests for heartbeat history and cron log reading in /activity/recent."""
+    """Tests for activity_log JSONL reading in /activity/recent."""
 
-    async def test_heartbeat_from_date_split_dir(self, tmp_path):
-        """Date-split JSONL files in heartbeat_history/ appear in response."""
+    async def test_basic_activity_retrieval(self, tmp_path):
+        """Activity entries from JSONL files appear in response."""
+        from datetime import datetime, timezone
+
         animas_dir = tmp_path / "animas"
-        alice_dir = animas_dir / "alice"
-        hb_dir = alice_dir / "shortterm" / "heartbeat_history"
-        hb_dir.mkdir(parents=True)
-
-        entry = json.dumps({
-            "timestamp": "2026-02-16T10:00:00+00:00",
-            "trigger": "heartbeat",
-            "action": "checked",
-            "summary": "All clear",
-            "duration_ms": 150,
-        }, ensure_ascii=False)
-        (hb_dir / "2026-02-16.jsonl").write_text(entry + "\n", encoding="utf-8")
+        (animas_dir / "alice").mkdir(parents=True)
+        now = datetime.now(timezone.utc)
+        _write_activity(animas_dir, "alice", [
+            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "All clear", "content": "", "from": "", "to": "", "channel": "", "tool": "", "via": "", "meta": {}},
+        ])
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -320,31 +344,25 @@ class TestActivityEndpoint:
             resp = await client.get("/api/activity/recent?hours=48")
         data = resp.json()
 
-        hb_events = [e for e in data["events"] if e["type"] == "heartbeat"]
+        hb_events = [e for e in data["events"] if e["type"] == "heartbeat_start"]
         assert len(hb_events) == 1
-        assert hb_events[0]["animas"] == ["alice"]
+        assert hb_events[0]["anima"] == "alice"
         assert hb_events[0]["summary"] == "All clear"
-        assert hb_events[0]["metadata"]["trigger"] == "heartbeat"
-        assert hb_events[0]["metadata"]["action"] == "checked"
-        assert hb_events[0]["metadata"]["duration_ms"] == 150
+        # New format includes 'id' field
+        assert hb_events[0]["id"].startswith("alice:")
 
-    async def test_heartbeat_from_legacy_file(self, tmp_path):
-        """Legacy single heartbeat_history.jsonl is read as fallback."""
+    async def test_filter_by_event_type(self, tmp_path):
+        """event_type filter returns only matching types."""
+        from datetime import datetime, timezone
+
         animas_dir = tmp_path / "animas"
-        alice_dir = animas_dir / "alice"
-        shortterm_dir = alice_dir / "shortterm"
-        shortterm_dir.mkdir(parents=True)
-        # No heartbeat_history/ directory -- only legacy single file
-        entry = json.dumps({
-            "timestamp": "2026-02-16T09:00:00+00:00",
-            "trigger": "heartbeat",
-            "action": "scanned",
-            "summary": "Legacy entry",
-            "duration_ms": 200,
-        }, ensure_ascii=False)
-        (shortterm_dir / "heartbeat_history.jsonl").write_text(
-            entry + "\n", encoding="utf-8",
-        )
+        (animas_dir / "alice").mkdir(parents=True)
+        now = datetime.now(timezone.utc)
+        _write_activity(animas_dir, "alice", [
+            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "HB", "content": ""},
+            {"ts": now.isoformat(), "type": "cron_executed", "summary": "Cron", "content": ""},
+            {"ts": now.isoformat(), "type": "message_received", "summary": "Msg", "content": "Hello"},
+        ])
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -352,28 +370,51 @@ class TestActivityEndpoint:
         )
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/activity/recent?hours=48")
+            resp = await client.get("/api/activity/recent?hours=48&event_type=heartbeat_start")
         data = resp.json()
 
-        hb_events = [e for e in data["events"] if e["type"] == "heartbeat"]
-        assert len(hb_events) == 1
-        assert hb_events[0]["summary"] == "Legacy entry"
-        assert hb_events[0]["metadata"]["action"] == "scanned"
+        assert all(e["type"] == "heartbeat_start" for e in data["events"])
+        assert data["total"] == 1
 
-    async def test_cron_logs_included(self, tmp_path):
-        """Cron log JSONL files in state/cron_logs/ appear in response."""
+    async def test_filter_by_anima(self, tmp_path):
+        """anima filter returns only events from the specified anima."""
+        from datetime import datetime, timezone
+
         animas_dir = tmp_path / "animas"
-        alice_dir = animas_dir / "alice"
-        cron_dir = alice_dir / "state" / "cron_logs"
-        cron_dir.mkdir(parents=True)
+        (animas_dir / "alice").mkdir(parents=True)
+        (animas_dir / "bob").mkdir(parents=True)
+        now = datetime.now(timezone.utc)
+        _write_activity(animas_dir, "alice", [
+            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "Alice HB", "content": ""},
+        ])
+        _write_activity(animas_dir, "bob", [
+            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "Bob HB", "content": ""},
+        ])
 
-        entry = json.dumps({
-            "timestamp": "2026-02-16T12:00:00+00:00",
-            "task": "daily_report",
-            "summary": "Report generated",
-            "duration_ms": 500,
-        }, ensure_ascii=False)
-        (cron_dir / "2026-02-16.jsonl").write_text(entry + "\n", encoding="utf-8")
+        app = _make_test_app(
+            animas_dir=animas_dir,
+            anima_names=["alice", "bob"],
+        )
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/activity/recent?hours=48&anima=alice")
+        data = resp.json()
+
+        assert all(e["anima"] == "alice" for e in data["events"])
+        assert data["total"] == 1
+
+    async def test_pagination_offset_limit(self, tmp_path):
+        """Offset and limit control pagination correctly."""
+        from datetime import datetime, timezone, timedelta
+
+        animas_dir = tmp_path / "animas"
+        (animas_dir / "alice").mkdir(parents=True)
+        now = datetime.now(timezone.utc)
+        entries = []
+        for i in range(10):
+            ts = (now - timedelta(minutes=10 - i)).isoformat()
+            entries.append({"ts": ts, "type": "tool_use", "summary": f"Entry {i}", "content": ""})
+        _write_activity(animas_dir, "alice", entries)
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -381,52 +422,21 @@ class TestActivityEndpoint:
         )
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/activity/recent?hours=48")
+            resp = await client.get("/api/activity/recent?hours=48&offset=3&limit=4")
         data = resp.json()
 
-        cron_events = [e for e in data["events"] if e["type"] == "cron"]
-        assert len(cron_events) == 1
-        assert cron_events[0]["animas"] == ["alice"]
-        assert cron_events[0]["summary"] == "Report generated"
-        assert cron_events[0]["metadata"]["task"] == "daily_report"
-        assert cron_events[0]["metadata"]["duration_ms"] == 500
+        assert len(data["events"]) == 4
+        assert data["total"] == 10
+        assert data["offset"] == 3
+        assert data["limit"] == 4
+        assert data["has_more"] is True
 
-    async def test_cron_logs_with_exit_code(self, tmp_path):
-        """Cron entry with exit_code uses task:exit_code format for summary."""
-        animas_dir = tmp_path / "animas"
-        alice_dir = animas_dir / "alice"
-        cron_dir = alice_dir / "state" / "cron_logs"
-        cron_dir.mkdir(parents=True)
-
-        entry = json.dumps({
-            "timestamp": "2026-02-16T12:00:00+00:00",
-            "task": "backup",
-            "exit_code": 0,
-            "duration_ms": 300,
-        }, ensure_ascii=False)
-        (cron_dir / "2026-02-16.jsonl").write_text(entry + "\n", encoding="utf-8")
-
-        app = _make_test_app(
-            animas_dir=animas_dir,
-            anima_names=["alice"],
-        )
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/activity/recent?hours=48")
-        data = resp.json()
-
-        cron_events = [e for e in data["events"] if e["type"] == "cron"]
-        assert len(cron_events) == 1
-        assert "backup" in cron_events[0]["summary"]
-        assert "exit_code=0" in cron_events[0]["summary"]
-        assert cron_events[0]["metadata"]["exit_code"] == 0
-
-    async def test_empty_dirs_no_errors(self, tmp_path):
-        """No crash when heartbeat/cron directories do not exist."""
+    async def test_empty_activity_log_no_errors(self, tmp_path):
+        """No crash when activity_log directory does not exist."""
         animas_dir = tmp_path / "animas"
         alice_dir = animas_dir / "alice"
         alice_dir.mkdir(parents=True)
-        # No shortterm/ or state/ directories at all
+        # No activity_log/ directory at all
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -437,39 +447,20 @@ class TestActivityEndpoint:
             resp = await client.get("/api/activity/recent?hours=48")
         assert resp.status_code == 200
         data = resp.json()
-        # May have session/chat events but heartbeat/cron should be empty
-        hb_events = [e for e in data["events"] if e["type"] == "heartbeat"]
-        cron_events = [e for e in data["events"] if e["type"] == "cron"]
-        assert len(hb_events) == 0
-        assert len(cron_events) == 0
+        assert data["events"] == []
+        assert data["total"] == 0
 
     async def test_events_sorted_descending(self, tmp_path):
-        """Events are sorted by timestamp descending."""
+        """Events are sorted by timestamp descending (newest first)."""
+        from datetime import datetime, timezone, timedelta
+
         animas_dir = tmp_path / "animas"
-        alice_dir = animas_dir / "alice"
-        hb_dir = alice_dir / "shortterm" / "heartbeat_history"
-        hb_dir.mkdir(parents=True)
-        cron_dir = alice_dir / "state" / "cron_logs"
-        cron_dir.mkdir(parents=True)
-
-        # Create heartbeat entry with earlier timestamp
-        hb_entry = json.dumps({
-            "timestamp": "2026-02-16T08:00:00+00:00",
-            "trigger": "heartbeat",
-            "action": "checked",
-            "summary": "Earlier heartbeat",
-            "duration_ms": 100,
-        }, ensure_ascii=False)
-        (hb_dir / "2026-02-16.jsonl").write_text(hb_entry + "\n", encoding="utf-8")
-
-        # Create cron entry with later timestamp
-        cron_entry = json.dumps({
-            "timestamp": "2026-02-16T14:00:00+00:00",
-            "task": "afternoon_task",
-            "summary": "Later cron",
-            "duration_ms": 200,
-        }, ensure_ascii=False)
-        (cron_dir / "2026-02-16.jsonl").write_text(cron_entry + "\n", encoding="utf-8")
+        (animas_dir / "alice").mkdir(parents=True)
+        now = datetime.now(timezone.utc)
+        _write_activity(animas_dir, "alice", [
+            {"ts": (now - timedelta(hours=2)).isoformat(), "type": "heartbeat_start", "summary": "Earlier heartbeat", "content": ""},
+            {"ts": now.isoformat(), "type": "cron_executed", "summary": "Later cron", "content": ""},
+        ])
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -480,38 +471,25 @@ class TestActivityEndpoint:
             resp = await client.get("/api/activity/recent?hours=48")
         data = resp.json()
 
-        # Filter to only heartbeat and cron events for predictability
-        relevant = [
-            e for e in data["events"] if e["type"] in ("heartbeat", "cron")
-        ]
-        assert len(relevant) == 2
+        assert len(data["events"]) == 2
         # First should be the later (cron), second the earlier (heartbeat)
-        assert relevant[0]["type"] == "cron"
-        assert relevant[0]["summary"] == "Later cron"
-        assert relevant[1]["type"] == "heartbeat"
-        assert relevant[1]["summary"] == "Earlier heartbeat"
+        assert data["events"][0]["type"] == "cron_executed"
+        assert data["events"][0]["summary"] == "Later cron"
+        assert data["events"][1]["type"] == "heartbeat_start"
+        assert data["events"][1]["summary"] == "Earlier heartbeat"
 
-    async def test_events_capped_at_200(self, tmp_path):
-        """No more than 200 events are returned."""
+    async def test_events_capped_at_default_limit_200(self, tmp_path):
+        """No more than 200 events are returned by default."""
+        from datetime import datetime, timezone, timedelta
+
         animas_dir = tmp_path / "animas"
-        alice_dir = animas_dir / "alice"
-        hb_dir = alice_dir / "shortterm" / "heartbeat_history"
-        hb_dir.mkdir(parents=True)
-
-        # Create 250 heartbeat entries in a single file
-        lines = []
+        (animas_dir / "alice").mkdir(parents=True)
+        now = datetime.now(timezone.utc)
+        entries = []
         for i in range(250):
-            entry = json.dumps({
-                "timestamp": f"2026-02-16T10:{i // 60:02d}:{i % 60:02d}+00:00",
-                "trigger": "heartbeat",
-                "action": "checked",
-                "summary": f"Entry {i}",
-                "duration_ms": 100,
-            }, ensure_ascii=False)
-            lines.append(entry)
-        (hb_dir / "2026-02-16.jsonl").write_text(
-            "\n".join(lines) + "\n", encoding="utf-8",
-        )
+            ts = (now - timedelta(seconds=250 - i)).isoformat()
+            entries.append({"ts": ts, "type": "heartbeat_start", "summary": f"Entry {i}", "content": ""})
+        _write_activity(animas_dir, "alice", entries)
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -522,56 +500,57 @@ class TestActivityEndpoint:
             resp = await client.get("/api/activity/recent?hours=48")
         data = resp.json()
         assert len(data["events"]) <= 200
+        assert data["total"] == 250
+        assert data["has_more"] is True
 
-    async def test_heartbeat_multiple_date_files(self, tmp_path):
-        """Multiple date-split JSONL files are all read."""
+    async def test_multiple_animas_merged(self, tmp_path):
+        """Events from multiple animas are merged and sorted."""
+        from datetime import datetime, timezone, timedelta
+
         animas_dir = tmp_path / "animas"
-        alice_dir = animas_dir / "alice"
-        hb_dir = alice_dir / "shortterm" / "heartbeat_history"
-        hb_dir.mkdir(parents=True)
-
-        for day in (15, 16):
-            entry = json.dumps({
-                "timestamp": f"2026-02-{day}T10:00:00+00:00",
-                "trigger": "heartbeat",
-                "action": "checked",
-                "summary": f"Day {day}",
-                "duration_ms": 100,
-            }, ensure_ascii=False)
-            (hb_dir / f"2026-02-{day}.jsonl").write_text(
-                entry + "\n", encoding="utf-8",
-            )
+        (animas_dir / "alice").mkdir(parents=True)
+        (animas_dir / "bob").mkdir(parents=True)
+        now = datetime.now(timezone.utc)
+        _write_activity(animas_dir, "alice", [
+            {"ts": (now - timedelta(minutes=2)).isoformat(), "type": "heartbeat_start", "summary": "Alice HB", "content": ""},
+        ])
+        _write_activity(animas_dir, "bob", [
+            {"ts": now.isoformat(), "type": "cron_executed", "summary": "Bob Cron", "content": ""},
+        ])
 
         app = _make_test_app(
             animas_dir=animas_dir,
-            anima_names=["alice"],
+            anima_names=["alice", "bob"],
         )
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/activity/recent?hours=72")
+            resp = await client.get("/api/activity/recent?hours=48")
         data = resp.json()
 
-        hb_events = [e for e in data["events"] if e["type"] == "heartbeat"]
-        assert len(hb_events) == 2
-        summaries = {e["summary"] for e in hb_events}
-        assert summaries == {"Day 15", "Day 16"}
+        assert data["total"] == 2
+        # Newest first: Bob's cron, then Alice's heartbeat
+        assert data["events"][0]["anima"] == "bob"
+        assert data["events"][1]["anima"] == "alice"
 
     async def test_malformed_jsonl_lines_skipped(self, tmp_path):
         """Malformed JSONL lines are skipped without crashing."""
+        from datetime import datetime, timezone
+
         animas_dir = tmp_path / "animas"
-        alice_dir = animas_dir / "alice"
-        hb_dir = alice_dir / "shortterm" / "heartbeat_history"
-        hb_dir.mkdir(parents=True)
+        (animas_dir / "alice").mkdir(parents=True)
+        now = datetime.now(timezone.utc)
 
         good_entry = json.dumps({
-            "timestamp": "2026-02-16T10:00:00+00:00",
-            "trigger": "heartbeat",
-            "action": "checked",
+            "ts": now.isoformat(),
+            "type": "heartbeat_start",
             "summary": "Good entry",
-            "duration_ms": 100,
+            "content": "",
         }, ensure_ascii=False)
+        log_dir = animas_dir / "alice" / "activity_log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        date_str = now.isoformat()[:10]
         content = "this is not json\n" + good_entry + "\n" + "{bad json\n"
-        (hb_dir / "2026-02-16.jsonl").write_text(content, encoding="utf-8")
+        (log_dir / f"{date_str}.jsonl").write_text(content, encoding="utf-8")
 
         app = _make_test_app(
             animas_dir=animas_dir,
@@ -582,7 +561,7 @@ class TestActivityEndpoint:
             resp = await client.get("/api/activity/recent?hours=48")
         data = resp.json()
 
-        hb_events = [e for e in data["events"] if e["type"] == "heartbeat"]
+        hb_events = [e for e in data["events"] if e["type"] == "heartbeat_start"]
         assert len(hb_events) == 1
         assert hb_events[0]["summary"] == "Good entry"
 

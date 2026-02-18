@@ -164,65 +164,49 @@ async function _loadActivity() {
   if (!timeline) return;
 
   const TYPE_ICONS = {
-    message: "\uD83D\uDCE9",
-    heartbeat: "\uD83D\uDC93",
-    cron: "\u23F0",
-    chat: "\uD83D\uDCAC",
-    notification: "\uD83D\uDD14",
-    system: "\u2699\uFE0F",
-    startup: "\uD83D\uDE80",
-    shutdown: "\u26D4",
-    error: "\u274C",
+    message_received: "\uD83D\uDCE8",
+    response_sent: "\uD83D\uDCAC",
+    channel_read: "\uD83D\uDCD6",
+    channel_post: "\uD83D\uDCE2",
+    dm_received: "\uD83D\uDCE9",
+    dm_sent: "\u2709\uFE0F",
+    human_notify: "\uD83D\uDCE3",
+    tool_use: "\uD83D\uDD27",
+    heartbeat_start: "\uD83D\uDD04",
+    heartbeat_end: "\u2705",
+    cron_executed: "\u23F0",
+    memory_write: "\uD83D\uDCDD",
+    error: "\u26A0\uFE0F",
+    issue_resolved: "\uD83C\uDFAF",
   };
 
   try {
-    const data = await api("/api/activity/recent?hours=12&limit=100");
+    const data = await api("/api/activity/recent?hours=12&limit=10");
     const events = data.events || [];
     if (events.length === 0) {
       timeline.innerHTML = '<div class="loading-placeholder">最近のアクティビティはありません</div>';
       return;
     }
 
-    // Filter buttons
-    const types = ["all", "message", "heartbeat", "cron", "chat"];
-    const filterLabels = { all: "All", message: "\uD83D\uDCE9", heartbeat: "\uD83D\uDC93", cron: "\u23F0", chat: "\uD83D\uDCAC" };
-    const filterHtml = types.map(t =>
-      `<button class="btn-secondary home-activity-filter${t === "all" ? " active" : ""}" data-filter="${t}" style="padding:0.2rem 0.6rem; font-size:0.8rem; margin-right:0.3rem;">${filterLabels[t]}</button>`
-    ).join("");
-
-    const latest = events.slice(0, 100);
-
-    const renderEvents = (filter) => latest
-      .filter(evt => filter === "all" || evt.type === filter)
-      .map(evt => {
-        const icon = TYPE_ICONS[evt.type] || TYPE_ICONS.system;
-        const ts = timeStr(evt.timestamp);
-        const animas = (evt.animas || []).join(", ") || evt.anima || evt.name || "";
-        const summary = evt.summary || evt.message || JSON.stringify(evt).slice(0, 100);
-        return `
-          <div style="display:flex; align-items:flex-start; gap:0.5rem; padding:0.4rem 0; border-bottom:1px solid var(--border-color, #eee);">
-            <span style="flex-shrink:0;">${icon}</span>
-            <span style="color:var(--text-secondary, #666); flex-shrink:0; min-width:3rem;">${escapeHtml(ts)}</span>
-            <span style="font-weight:500; flex-shrink:0; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(animas)}</span>
-            <span style="color:var(--text-secondary, #666); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(summary)}</span>
-          </div>
-        `;
-      }).join("");
+    const eventsHtml = events.map(evt => {
+      const icon = TYPE_ICONS[evt.type] || "\u2022";
+      const ts = timeStr(evt.ts);
+      const anima = evt.anima || "";
+      const summary = evt.summary || evt.content || "";
+      return `
+        <div style="display:flex; align-items:flex-start; gap:0.5rem; padding:0.4rem 0; border-bottom:1px solid var(--border-color, #eee);">
+          <span style="flex-shrink:0;">${icon}</span>
+          <span style="color:var(--text-secondary, #666); flex-shrink:0; min-width:3rem;">${escapeHtml(ts)}</span>
+          <span style="font-weight:500; flex-shrink:0; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(anima)}</span>
+          <span style="color:var(--text-secondary, #666); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(summary)}</span>
+        </div>
+      `;
+    }).join("");
 
     timeline.innerHTML = `
-      <div style="margin-bottom:0.5rem;">${filterHtml}</div>
-      <div id="homeActivityEvents">${renderEvents("all")}</div>
+      <div id="homeActivityEvents">${eventsHtml}</div>
+      <div style="text-align:right;margin-top:0.5rem;"><a href="#/activity" style="color:var(--accent-color,#2563eb);text-decoration:none;font-size:0.85rem;">アクティビティを見る →</a></div>
     `;
-
-    // Filter click handlers
-    for (const btn of timeline.querySelectorAll(".home-activity-filter")) {
-      btn.addEventListener("click", () => {
-        for (const b of timeline.querySelectorAll(".home-activity-filter")) b.classList.remove("active");
-        btn.classList.add("active");
-        const eventsEl = document.getElementById("homeActivityEvents");
-        if (eventsEl) eventsEl.innerHTML = renderEvents(btn.dataset.filter);
-      });
-    }
   } catch (err) {
     timeline.innerHTML = `<div class="loading-placeholder">アクティビティ取得失敗: ${escapeHtml(err.message)}</div>`;
   }

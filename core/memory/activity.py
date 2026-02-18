@@ -19,6 +19,7 @@ dm_log, and heartbeat_history files.
 
 import json
 import logging
+import math
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -48,17 +49,38 @@ class ActivityEntry:
     via: str = ""
     meta: dict[str, Any] = field(default_factory=dict)
     _line_number: int = field(default=0, init=False, repr=False)
+    _anima_name: str = field(default="", init=False, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-safe dict, omitting empty fields."""
         d = asdict(self)
         d.pop("_line_number", None)
+        d.pop("_anima_name", None)
         d = {k: v for k, v in d.items() if v}
         # Rename Python field names to JSONL keys (avoid Python reserved word 'from')
         if "from_person" in d:
             d["from"] = d.pop("from_person")
         if "to_person" in d:
             d["to"] = d.pop("to_person")
+        return d
+
+    def to_api_dict(self, anima_name: str = "") -> dict[str, Any]:
+        """Serialise for API response, including all fields."""
+        name = anima_name or self._anima_name
+        d: dict[str, Any] = {
+            "id": f"{name}:{self.ts}:{self.type}:{self._line_number}",
+            "ts": self.ts,
+            "type": self.type,
+            "anima": name,
+            "summary": self.summary,
+            "content": self.content,
+            "from_person": self.from_person,
+            "to_person": self.to_person,
+            "channel": self.channel,
+            "tool": self.tool,
+            "via": self.via,
+            "meta": self.meta,
+        }
         return d
 
 
@@ -72,6 +94,17 @@ class EntryGroup:
     entries: list[ActivityEntry]  # Entries in this group
     label: str                    # Group label (e.g. "yuki: boto3問題")
     source_lines: str             # JSONL line number range (e.g. "L2-6")
+
+
+@dataclass
+class ActivityPage:
+    """Paginated result for API responses."""
+
+    entries: list[ActivityEntry]
+    total: int
+    offset: int
+    limit: int
+    has_more: bool
 
 
 # ── Grouping helpers ─────────────────────────────────────────
@@ -205,6 +238,85 @@ class ActivityLogger:
 
     # ── Retrieval ─────────────────────────────────────────────
 
+    def _load_entries(
+        self,
+        days: int = 2,
+        hours: int | None = None,
+        types: list[str] | None = None,
+        involving: str | None = None,
+    ) -> list[ActivityEntry]:
+        """Load all matching entries (no limit/offset).
+
+        Args:
+            days: Number of past days to scan (including today).
+            hours: If given, overrides *days* with ``ceil(hours/24)``
+                and filters entries to the last *hours* hours.
+            types: If given, only include these event types.
+            involving: If given, only entries where *from_person*,
+                *to_person*, or *channel* matches this value.
+
+        Returns:
+            Chronologically sorted list of all matching entries.
+        """
+        entries: list[ActivityEntry] = []
+        today = date.today()
+        type_set = set(types) if types else None
+
+        # Determine scan range
+        scan_days = days
+        cutoff: datetime | None = None
+        if hours is not None:
+            scan_days = max(1, math.ceil(hours / 24))
+            cutoff = datetime.now() - timedelta(hours=hours)
+
+        for day_offset in range(scan_days):
+            target = today - timedelta(days=day_offset)
+            path = self._log_dir / f"{target.isoformat()}.jsonl"
+            if not path.exists():
+                continue
+            try:
+                for line_num, line in enumerate(
+                    path.read_text(encoding="utf-8").splitlines(), start=1
+                ):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        raw = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if type_set and raw.get("type") not in type_set:
+                        continue
+                    if involving and not self._involves(raw, involving):
+                        continue
+                    if cutoff:
+                        try:
+                            ts = datetime.fromisoformat(raw.get("ts", ""))
+                            # Normalise to naive for comparison
+                            if ts.tzinfo is not None:
+                                ts = ts.replace(tzinfo=None)
+                            if ts < cutoff:
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+                    # Map JSONL keys to Python field names
+                    if "from" in raw:
+                        raw["from_person"] = raw.pop("from")
+                    if "to" in raw:
+                        raw["to_person"] = raw.pop("to")
+                    entry = ActivityEntry(**{
+                        k: v for k, v in raw.items()
+                        if k in ActivityEntry.__dataclass_fields__
+                    })
+                    entry._line_number = line_num
+                    entries.append(entry)
+            except Exception:
+                logger.exception("Failed to read activity log %s", path)
+
+        # Chronological sort, newest last
+        entries.sort(key=lambda e: e.ts)
+        return entries
+
     def recent(
         self,
         days: int = 2,
@@ -224,52 +336,71 @@ class ActivityLogger:
         Returns:
             List of :class:`ActivityEntry` in chronological order.
         """
-        entries: list[ActivityEntry] = []
-        today = date.today()
-        type_set = set(types) if types else None
-
-        for offset in range(days):
-            target = today - timedelta(days=offset)
-            path = self._log_dir / f"{target.isoformat()}.jsonl"
-            if not path.exists():
-                continue
-            try:
-                for line_num, line in enumerate(
-                    path.read_text(encoding="utf-8").splitlines(), start=1
-                ):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        raw = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if type_set and raw.get("type") not in type_set:
-                        continue
-                    if involving and not self._involves(raw, involving):
-                        continue
-                    # Map JSONL keys to Python field names
-                    if "from" in raw:
-                        raw["from_person"] = raw.pop("from")
-                    if "to" in raw:
-                        raw["to_person"] = raw.pop("to")
-                    entry = ActivityEntry(**{
-                        k: v for k, v in raw.items()
-                        if k in ActivityEntry.__dataclass_fields__
-                    })
-                    entry._line_number = line_num
-                    entries.append(entry)
-            except Exception:
-                logger.exception("Failed to read activity log %s", path)
-
-        # Chronological sort, newest last
-        entries.sort(key=lambda e: e.ts)
+        entries = self._load_entries(
+            days=days, types=types, involving=involving,
+        )
 
         # Return the most recent *limit* entries
         if len(entries) > limit:
             entries = entries[-limit:]
 
         return entries
+
+    def recent_page(
+        self,
+        *,
+        days: int = 2,
+        hours: int | None = None,
+        limit: int = 200,
+        offset: int = 0,
+        types: list[str] | None = None,
+        involving: str | None = None,
+    ) -> ActivityPage:
+        """Load recent entries with pagination for API responses.
+
+        Args:
+            days: Number of past days to scan (including today).
+            hours: If given, overrides *days* and filters to last N hours.
+            limit: Page size (default 200, max 500).
+            offset: Number of entries to skip from newest.
+            types: If given, only include these event types.
+            involving: If given, only entries where *from_person*,
+                *to_person*, or *channel* matches this value.
+
+        Returns:
+            :class:`ActivityPage` with paginated entries (newest first).
+        """
+        offset = max(0, offset)
+
+        all_entries = self._load_entries(
+            days=days, hours=hours, types=types, involving=involving,
+        )
+        total = len(all_entries)
+
+        # Reverse to newest-first for pagination
+        all_entries.reverse()
+
+        # limit <= 0 means "return all" (used for cross-anima merging)
+        if limit <= 0:
+            page = all_entries[offset:]
+            return ActivityPage(
+                entries=page,
+                total=total,
+                offset=offset,
+                limit=total,
+                has_more=False,
+            )
+
+        limit = min(limit, 500)
+        page = all_entries[offset:offset + limit]
+
+        return ActivityPage(
+            entries=page,
+            total=total,
+            offset=offset,
+            limit=limit,
+            has_more=(offset + limit) < total,
+        )
 
     @staticmethod
     def _involves(raw: dict[str, Any], name: str) -> bool:

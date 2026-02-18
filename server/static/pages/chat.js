@@ -728,10 +728,20 @@ function _renderAnimaState() {
 // ── Activity Feed ──────────────────────────
 
 const _TYPE_ICONS = {
-  heartbeat: "\uD83D\uDC93",
-  cron: "\u23F0",
-  chat: "\uD83D\uDCAC",
-  system: "\u2699\uFE0F",
+  message_received: "\uD83D\uDCE8",
+  response_sent: "\uD83D\uDCAC",
+  channel_read: "\uD83D\uDCD6",
+  channel_post: "\uD83D\uDCE2",
+  dm_received: "\uD83D\uDCE9",
+  dm_sent: "\u2709\uFE0F",
+  human_notify: "\uD83D\uDCE3",
+  tool_use: "\uD83D\uDD27",
+  heartbeat_start: "\uD83D\uDD04",
+  heartbeat_end: "\u2705",
+  cron_executed: "\u23F0",
+  memory_write: "\uD83D\uDCDD",
+  error: "\u26A0\uFE0F",
+  issue_resolved: "\uD83C\uDFAF",
 };
 
 function _addLocalActivity(type, animaName, summary) {
@@ -742,7 +752,7 @@ function _addLocalActivity(type, animaName, summary) {
   const empty = feed.querySelector(".activity-empty");
   if (empty) empty.remove();
 
-  const icon = _TYPE_ICONS[type] || _TYPE_ICONS.system;
+  const icon = _TYPE_ICONS[type] || "\u2022";
   const ts = new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   const entry = document.createElement("div");
@@ -777,8 +787,8 @@ async function _loadActivity() {
     }
 
     feed.innerHTML = events.slice(0, 50).map(evt => {
-      const icon = _TYPE_ICONS[evt.type] || _TYPE_ICONS.system;
-      const ts = timeStr(evt.timestamp);
+      const icon = _TYPE_ICONS[evt.type] || "\u2022";
+      const ts = timeStr(evt.ts);
       const summary = evt.summary || evt.message || "";
       return `
         <div class="activity-entry">

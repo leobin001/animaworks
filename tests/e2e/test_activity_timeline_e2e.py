@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -52,46 +52,19 @@ def _setup_anima(animas_dir: Path, name: str) -> Path:
     return anima_dir
 
 
-def _write_heartbeat_log(anima_dir: Path, entries: list[dict]) -> None:
-    """Write heartbeat log entries."""
-    hb_dir = anima_dir / "shortterm" / "heartbeat_history"
-    hb_dir.mkdir(parents=True, exist_ok=True)
-    from datetime import date
-    log_file = hb_dir / f"{date.today().isoformat()}.jsonl"
-    with log_file.open("a", encoding="utf-8") as f:
-        for entry in entries:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
-def _write_cron_log(anima_dir: Path, entries: list[dict]) -> None:
-    """Write cron log entries."""
-    cron_dir = anima_dir / "state" / "cron_logs"
-    cron_dir.mkdir(parents=True, exist_ok=True)
-    from datetime import date
-    log_file = cron_dir / f"{date.today().isoformat()}.jsonl"
-    with log_file.open("a", encoding="utf-8") as f:
-        for entry in entries:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
-def _write_channel_log(shared_dir: Path, channel: str, entries: list[dict]) -> None:
-    """Write channel log entries to shared/channels/{channel}.jsonl."""
-    channels_dir = shared_dir / "channels"
-    channels_dir.mkdir(parents=True, exist_ok=True)
-    log_file = channels_dir / f"{channel}.jsonl"
-    with log_file.open("a", encoding="utf-8") as f:
-        for entry in entries:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
-def _write_dm_log(shared_dir: Path, pair: str, entries: list[dict]) -> None:
-    """Write DM log entries to shared/dm_logs/{pair}.jsonl."""
-    dm_dir = shared_dir / "dm_logs"
-    dm_dir.mkdir(parents=True, exist_ok=True)
-    log_file = dm_dir / f"{pair}.jsonl"
-    with log_file.open("a", encoding="utf-8") as f:
-        for entry in entries:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+def _write_activity(animas_dir: Path, name: str, entries: list[dict]) -> None:
+    """Write test activity entries to {animas_dir}/{name}/activity_log/{date}.jsonl."""
+    log_dir = animas_dir / name / "activity_log"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    by_date: dict[str, list[dict]] = {}
+    for entry in entries:
+        date_str = entry["ts"][:10]
+        by_date.setdefault(date_str, []).append(entry)
+    for date_str, date_entries in by_date.items():
+        path = log_dir / f"{date_str}.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            for e in date_entries:
+                f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
 
 # ── Test 1: Pagination ───────────────────────────────────
@@ -113,18 +86,18 @@ class TestActivityPagination:
         assert "limit" in data
         assert "has_more" in data
         assert data["offset"] == 0
-        assert data["limit"] == 100
+        assert data["limit"] == 200
         assert data["has_more"] is False
 
     async def test_limit_parameter(self, tmp_path: Path) -> None:
         animas_dir = tmp_path / "animas"
-        anima_dir = _setup_anima(animas_dir, "alice")
+        _setup_anima(animas_dir, "alice")
         now = datetime.now(timezone.utc)
         entries = [
-            {"timestamp": now.isoformat(), "trigger": "heartbeat", "action": "responded", "summary": f"HB {i}", "duration_ms": 100}
+            {"ts": (now - timedelta(seconds=10 - i)).isoformat(), "type": "heartbeat_start", "summary": f"HB {i}", "content": ""}
             for i in range(10)
         ]
-        _write_heartbeat_log(anima_dir, entries)
+        _write_activity(animas_dir, "alice", entries)
         app = _create_app(tmp_path, anima_names=["alice"])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -137,13 +110,13 @@ class TestActivityPagination:
 
     async def test_offset_parameter(self, tmp_path: Path) -> None:
         animas_dir = tmp_path / "animas"
-        anima_dir = _setup_anima(animas_dir, "alice")
+        _setup_anima(animas_dir, "alice")
         now = datetime.now(timezone.utc)
         entries = [
-            {"timestamp": now.isoformat(), "trigger": "heartbeat", "action": "responded", "summary": f"HB {i}", "duration_ms": 100}
+            {"ts": (now - timedelta(seconds=5 - i)).isoformat(), "type": "heartbeat_start", "summary": f"HB {i}", "content": ""}
             for i in range(5)
         ]
-        _write_heartbeat_log(anima_dir, entries)
+        _write_activity(animas_dir, "alice", entries)
         app = _create_app(tmp_path, anima_names=["alice"])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -163,53 +136,54 @@ class TestActivityPagination:
         assert data["limit"] == 500
 
 
-# ── Test 2: Message logs ─────────────────────────────────
+# ── Test 2: DM activity log entries ──────────────────────
 
 
 class TestActivityMessageLog:
-    """Test that inter-anima DM logs appear in activity events."""
+    """Test that DM activity_log entries (dm_sent/dm_received) appear in activity events."""
 
     async def test_dm_events_returned(self, tmp_path: Path) -> None:
-        shared_dir = tmp_path / "shared"
-        shared_dir.mkdir(parents=True, exist_ok=True)
+        animas_dir = tmp_path / "animas"
+        _setup_anima(animas_dir, "alice")
         now = datetime.now(timezone.utc)
-        _write_dm_log(shared_dir, "alice-bob", [
-            {"ts": now.isoformat(), "from": "alice", "text": "Hello Bob!", "source": "anima"},
+        _write_activity(animas_dir, "alice", [
+            {"ts": now.isoformat(), "type": "dm_sent", "summary": "Hello Bob!", "content": "Hello Bob!", "from": "alice", "to": "bob", "channel": "", "tool": "", "via": "", "meta": {}},
         ])
-        app = _create_app(tmp_path, anima_names=["alice", "bob"])
+        app = _create_app(tmp_path, anima_names=["alice"])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/activity/recent")
         data = resp.json()
-        msg_events = [e for e in data["events"] if e["type"] == "message"]
-        assert len(msg_events) == 1
-        evt = msg_events[0]
-        assert "alice" in evt["animas"]
-        assert "bob" in evt["animas"]
+        dm_events = [e for e in data["events"] if e["type"] == "dm_sent"]
+        assert len(dm_events) == 1
+        evt = dm_events[0]
+        assert evt["anima"] == "alice"
+        assert evt["from_person"] == "alice"
+        assert evt["to_person"] == "bob"
         assert "Hello Bob!" in evt["summary"]
-        assert evt["metadata"]["from_person"] == "alice"
-        assert evt["metadata"]["to_person"] == "bob"
 
     async def test_dm_events_with_anima_filter(self, tmp_path: Path) -> None:
-        shared_dir = tmp_path / "shared"
-        shared_dir.mkdir(parents=True, exist_ok=True)
+        animas_dir = tmp_path / "animas"
+        _setup_anima(animas_dir, "alice")
+        _setup_anima(animas_dir, "charlie")
         now = datetime.now(timezone.utc)
-        _write_dm_log(shared_dir, "alice-bob", [
-            {"ts": now.isoformat(), "from": "alice", "text": "A to B", "source": "anima"},
+        _write_activity(animas_dir, "alice", [
+            {"ts": now.isoformat(), "type": "dm_sent", "summary": "A to B", "content": "", "from": "alice", "to": "bob"},
         ])
-        _write_dm_log(shared_dir, "charlie-dave", [
-            {"ts": now.isoformat(), "from": "charlie", "text": "C to D", "source": "anima"},
+        _write_activity(animas_dir, "charlie", [
+            {"ts": now.isoformat(), "type": "dm_sent", "summary": "C to D", "content": "", "from": "charlie", "to": "dave"},
         ])
-        app = _create_app(tmp_path, anima_names=["alice", "bob", "charlie", "dave"])
+        app = _create_app(tmp_path, anima_names=["alice", "charlie"])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/activity/recent?anima=alice")
         data = resp.json()
-        msg_events = [e for e in data["events"] if e["type"] == "message"]
-        assert len(msg_events) == 1
-        assert "A to B" in msg_events[0]["summary"]
+        dm_events = [e for e in data["events"] if e["type"] == "dm_sent"]
+        assert len(dm_events) == 1
+        assert dm_events[0]["anima"] == "alice"
+        assert "A to B" in dm_events[0]["summary"]
 
-    async def test_no_channels_or_dm_logs_dir(self, tmp_path: Path) -> None:
+    async def test_no_activity_log_dir(self, tmp_path: Path) -> None:
         app = _create_app(tmp_path, anima_names=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -227,49 +201,37 @@ class TestActivityTypeFilter:
 
     async def test_filter_by_single_type(self, tmp_path: Path) -> None:
         animas_dir = tmp_path / "animas"
-        shared_dir = tmp_path / "shared"
-        shared_dir.mkdir(parents=True, exist_ok=True)
-        anima_dir = _setup_anima(animas_dir, "alice")
+        _setup_anima(animas_dir, "alice")
         now = datetime.now(timezone.utc)
-        _write_heartbeat_log(anima_dir, [
-            {"timestamp": now.isoformat(), "trigger": "heartbeat", "action": "responded", "summary": "HB 1", "duration_ms": 100},
-        ])
-        _write_cron_log(anima_dir, [
-            {"timestamp": now.isoformat(), "task": "daily", "summary": "Cron 1", "duration_ms": 200},
-        ])
-        _write_dm_log(shared_dir, "alice-bob", [
-            {"ts": now.isoformat(), "from": "alice", "text": "msg", "source": "anima"},
+        _write_activity(animas_dir, "alice", [
+            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "HB 1", "content": ""},
+            {"ts": now.isoformat(), "type": "cron_executed", "summary": "Cron 1", "content": ""},
+            {"ts": now.isoformat(), "type": "dm_sent", "summary": "msg", "content": "", "from": "alice", "to": "bob"},
         ])
         app = _create_app(tmp_path, anima_names=["alice"])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/activity/recent?event_type=heartbeat")
+            resp = await client.get("/api/activity/recent?event_type=heartbeat_start")
         data = resp.json()
-        assert all(e["type"] == "heartbeat" for e in data["events"])
+        assert all(e["type"] == "heartbeat_start" for e in data["events"])
         assert data["total"] == 1
 
     async def test_filter_by_multiple_types(self, tmp_path: Path) -> None:
         animas_dir = tmp_path / "animas"
-        shared_dir = tmp_path / "shared"
-        shared_dir.mkdir(parents=True, exist_ok=True)
-        anima_dir = _setup_anima(animas_dir, "alice")
+        _setup_anima(animas_dir, "alice")
         now = datetime.now(timezone.utc)
-        _write_heartbeat_log(anima_dir, [
-            {"timestamp": now.isoformat(), "trigger": "heartbeat", "action": "responded", "summary": "HB", "duration_ms": 100},
-        ])
-        _write_cron_log(anima_dir, [
-            {"timestamp": now.isoformat(), "task": "daily", "summary": "Cron", "duration_ms": 200},
-        ])
-        _write_dm_log(shared_dir, "alice-bob", [
-            {"ts": now.isoformat(), "from": "alice", "text": "msg", "source": "anima"},
+        _write_activity(animas_dir, "alice", [
+            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "HB", "content": ""},
+            {"ts": now.isoformat(), "type": "cron_executed", "summary": "Cron", "content": ""},
+            {"ts": now.isoformat(), "type": "dm_sent", "summary": "msg", "content": "", "from": "alice", "to": "bob"},
         ])
         app = _create_app(tmp_path, anima_names=["alice"])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/activity/recent?event_type=heartbeat,message")
+            resp = await client.get("/api/activity/recent?event_type=heartbeat_start,dm_sent")
         data = resp.json()
         types = {e["type"] for e in data["events"]}
-        assert types == {"heartbeat", "message"}
+        assert types == {"heartbeat_start", "dm_sent"}
         assert data["total"] == 2
 
 
@@ -281,18 +243,13 @@ class TestActivityMixedEvents:
 
     async def test_all_event_types_aggregated(self, tmp_path: Path) -> None:
         animas_dir = tmp_path / "animas"
-        shared_dir = tmp_path / "shared"
-        shared_dir.mkdir(parents=True, exist_ok=True)
-        anima_dir = _setup_anima(animas_dir, "alice")
+        _setup_anima(animas_dir, "alice")
         now = datetime.now(timezone.utc)
-        _write_heartbeat_log(anima_dir, [
-            {"timestamp": now.isoformat(), "trigger": "heartbeat", "action": "responded", "summary": "HB", "duration_ms": 100},
-        ])
-        _write_cron_log(anima_dir, [
-            {"timestamp": now.isoformat(), "task": "daily", "summary": "Cron", "duration_ms": 200},
-        ])
-        _write_dm_log(shared_dir, "alice-bob", [
-            {"ts": now.isoformat(), "from": "alice", "text": "msg", "source": "anima"},
+        _write_activity(animas_dir, "alice", [
+            {"ts": (now - timedelta(seconds=3)).isoformat(), "type": "heartbeat_start", "summary": "HB", "content": ""},
+            {"ts": (now - timedelta(seconds=2)).isoformat(), "type": "cron_executed", "summary": "Cron", "content": ""},
+            {"ts": (now - timedelta(seconds=1)).isoformat(), "type": "dm_sent", "summary": "msg", "content": "", "from": "alice", "to": "bob"},
+            {"ts": now.isoformat(), "type": "tool_use", "summary": "web_search", "content": "", "tool": "web_search"},
         ])
         app = _create_app(tmp_path, anima_names=["alice"])
         transport = ASGITransport(app=app)
@@ -300,6 +257,13 @@ class TestActivityMixedEvents:
             resp = await client.get("/api/activity/recent")
         data = resp.json()
         types = {e["type"] for e in data["events"]}
-        assert "heartbeat" in types
-        assert "cron" in types
-        assert "message" in types
+        assert "heartbeat_start" in types
+        assert "cron_executed" in types
+        assert "dm_sent" in types
+        assert "tool_use" in types
+        # All events should have the new format fields
+        for evt in data["events"]:
+            assert "id" in evt
+            assert "ts" in evt
+            assert "anima" in evt
+            assert evt["anima"] == "alice"

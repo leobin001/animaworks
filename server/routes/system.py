@@ -250,243 +250,55 @@ def create_system_router() -> APIRouter:
         hours: int = 48,
         anima: str | None = None,
         offset: int = 0,
-        limit: int = 100,
+        limit: int = 200,
         event_type: str | None = None,
     ):
-        """Return recent activity events aggregated across animas."""
-        from datetime import date as date_type
-        from datetime import datetime, timedelta, timezone
+        """Return recent activity events from unified ActivityLogger.
 
-        from core.config.models import load_model_config
-        from core.memory.conversation import ConversationMemory
-        from core.memory.shortterm import ShortTermMemory
+        Reads directly from ``{anima_dir}/activity_log/{date}.jsonl``
+        — the single source of truth for all Anima interactions.
+        """
+        from core.memory.activity import ActivityLogger
 
         animas_dir = request.app.state.animas_dir
-        shared_dir = request.app.state.shared_dir
         anima_names = request.app.state.anima_names
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-        events: list[dict] = []
-
-        # Clamp limit
-        limit = max(1, min(limit, 500))
-        offset = max(0, offset)
 
         # Parse event_type filter (comma-separated)
-        type_filter: set[str] | None = None
+        types: list[str] | None = None
         if event_type:
-            type_filter = {t.strip() for t in event_type.split(",") if t.strip()}
+            types = [t.strip() for t in event_type.split(",") if t.strip()]
 
         target_names = (
-            [anima] if anima and anima in anima_names else anima_names
+            [anima] if anima and anima in anima_names else list(anima_names)
         )
 
+        # Collect entries from all target Animas
+        all_entries = []
         for name in target_names:
             anima_dir = animas_dir / name
             if not anima_dir.exists():
                 continue
+            al = ActivityLogger(anima_dir)
+            page = al.recent_page(
+                hours=hours,
+                limit=0,  # load all to merge across animas
+                types=types,
+            )
+            for entry in page.entries:
+                entry._anima_name = name
+            all_entries.extend(page.entries)
 
-            # Short-term memory archives (session history)
-            stm = ShortTermMemory(anima_dir)
-            archive_dir = stm._archive_dir
-            if archive_dir.exists():
-                for json_file in sorted(
-                    archive_dir.glob("*.json"), reverse=True,
-                ):
-                    try:
-                        data = json.loads(
-                            json_file.read_text(encoding="utf-8"),
-                        )
-                        ts_str = data.get("timestamp", "")
-                        ts = (
-                            datetime.fromisoformat(ts_str) if ts_str else None
-                        )
-                        if ts and ts.replace(tzinfo=timezone.utc) < cutoff:
-                            break
-                        events.append({
-                            "type": "session",
-                            "animas": [name],
-                            "timestamp": ts_str,
-                            "summary": (
-                                data.get("trigger", "")
-                                + ": "
-                                + data.get("original_prompt", "")[:80]
-                            ),
-                            "metadata": {
-                                "trigger": data.get("trigger", ""),
-                                "turn_count": data.get("turn_count", 0),
-                                "context_usage_ratio": data.get(
-                                    "context_usage_ratio", 0,
-                                ),
-                            },
-                        })
-                    except (json.JSONDecodeError, TypeError, ValueError):
-                        continue
+        # Sort all entries by ts descending (newest first)
+        all_entries.sort(key=lambda e: e.ts, reverse=True)
 
-            # Conversation transcripts (today)
-            try:
-                model_config = load_model_config(anima_dir)
-                conv = ConversationMemory(anima_dir, model_config)
-                today = date_type.today().isoformat()
-                messages = conv.load_transcript(today)
-                for msg in messages:
-                    ts_str = msg.get("timestamp", "")
-                    events.append({
-                        "type": "chat",
-                        "animas": [name],
-                        "timestamp": ts_str,
-                        "summary": (msg.get("content", ""))[:80],
-                        "metadata": {"role": msg.get("role", "")},
-                    })
-            except Exception:
-                logger.warning("Failed to load transcripts for %s", name, exc_info=True)
-
-            # Heartbeat history (date-split directory or legacy single file)
-            hb_dir = anima_dir / "shortterm" / "heartbeat_history"
-            hb_legacy = anima_dir / "shortterm" / "heartbeat_history.jsonl"
-            hb_files: list[Path] = []
-            if hb_dir.exists():
-                hb_files = sorted(hb_dir.glob("*.jsonl"), reverse=True)
-            elif hb_legacy.exists():
-                hb_files = [hb_legacy]
-            for hb_file in hb_files:
-                try:
-                    for line in hb_file.read_text(encoding="utf-8").strip().splitlines():
-                        try:
-                            entry = json.loads(line)
-                            ts_str = entry.get("timestamp", "")
-                            ts = datetime.fromisoformat(ts_str) if ts_str else None
-                            if ts and ts.replace(tzinfo=timezone.utc) < cutoff:
-                                continue
-                            events.append({
-                                "type": "heartbeat",
-                                "animas": [name],
-                                "timestamp": ts_str,
-                                "summary": entry.get("summary", "")[:80],
-                                "metadata": {
-                                    "trigger": entry.get("trigger", ""),
-                                    "action": entry.get("action", ""),
-                                    "duration_ms": entry.get("duration_ms", 0),
-                                },
-                            })
-                        except (json.JSONDecodeError, TypeError, ValueError):
-                            continue
-                except Exception:
-                    logger.warning("Failed to load heartbeat history for %s", name, exc_info=True)
-
-            # Cron execution logs
-            cron_log_dir = anima_dir / "state" / "cron_logs"
-            if cron_log_dir.exists():
-                try:
-                    for log_file in sorted(cron_log_dir.glob("*.jsonl"), reverse=True):
-                        for line in log_file.read_text(encoding="utf-8").strip().splitlines():
-                            try:
-                                entry = json.loads(line)
-                                ts_str = entry.get("timestamp", "")
-                                ts = datetime.fromisoformat(ts_str) if ts_str else None
-                                if ts and ts.replace(tzinfo=timezone.utc) < cutoff:
-                                    continue
-                                summary = entry.get("summary") or entry.get("task", "")
-                                if "exit_code" in entry:
-                                    summary = f"{entry.get('task', '')}: exit_code={entry['exit_code']}"
-                                events.append({
-                                    "type": "cron",
-                                    "animas": [name],
-                                    "timestamp": ts_str,
-                                    "summary": summary[:80],
-                                    "metadata": {
-                                        "task": entry.get("task", ""),
-                                        "duration_ms": entry.get("duration_ms", 0),
-                                        "exit_code": entry.get("exit_code"),
-                                    },
-                                })
-                            except (json.JSONDecodeError, TypeError, ValueError):
-                                continue
-                except Exception:
-                    logger.warning("Failed to load cron logs for %s", name, exc_info=True)
-
-        # ── Channel messages (shared channels) ──
-        channels_dir = shared_dir / "channels"
-        if channels_dir.exists():
-            anima_filter = set(target_names)
-            try:
-                for channel_file in sorted(channels_dir.glob("*.jsonl"), reverse=True):
-                    channel_name = channel_file.stem
-                    for line in channel_file.read_text(encoding="utf-8").strip().splitlines():
-                        try:
-                            entry = json.loads(line)
-                            ts_str = entry.get("ts", "")
-                            ts = datetime.fromisoformat(ts_str) if ts_str else None
-                            if ts and ts.replace(tzinfo=timezone.utc) < cutoff:
-                                continue
-                            from_p = entry.get("from", "")
-                            events.append({
-                                "type": "message",
-                                "animas": [from_p],
-                                "timestamp": ts_str,
-                                "summary": f"#{channel_name} {from_p}: {entry.get('text', '')[:60]}",
-                                "metadata": {
-                                    "from_person": from_p,
-                                    "channel": channel_name,
-                                    "text": entry.get("text", ""),
-                                    "source": entry.get("source", "anima"),
-                                },
-                            })
-                        except (json.JSONDecodeError, TypeError, ValueError):
-                            continue
-            except Exception:
-                logger.warning("Failed to load channel logs", exc_info=True)
-
-        # ── DM logs ──
-        dm_logs_dir = shared_dir / "dm_logs"
-        if dm_logs_dir.exists():
-            anima_filter = set(target_names)
-            try:
-                for dm_file in sorted(dm_logs_dir.glob("*.jsonl"), reverse=True):
-                    # Parse pair from filename (e.g., "alice-bob.jsonl")
-                    pair = dm_file.stem.split("-", 1)
-                    for line in dm_file.read_text(encoding="utf-8").strip().splitlines():
-                        try:
-                            entry = json.loads(line)
-                            ts_str = entry.get("ts", "")
-                            ts = datetime.fromisoformat(ts_str) if ts_str else None
-                            if ts and ts.replace(tzinfo=timezone.utc) < cutoff:
-                                continue
-                            from_p = entry.get("from", "")
-                            # Determine the other party
-                            to_p = pair[1] if from_p == pair[0] else pair[0] if len(pair) > 1 else ""
-                            # Include if either sender or receiver matches anima filter
-                            if anima and from_p not in anima_filter and to_p not in anima_filter:
-                                continue
-                            events.append({
-                                "type": "message",
-                                "animas": [from_p, to_p],
-                                "timestamp": ts_str,
-                                "summary": f"{from_p} → {to_p}: {entry.get('text', '')[:60]}",
-                                "metadata": {
-                                    "from_person": from_p,
-                                    "to_person": to_p,
-                                    "text": entry.get("text", ""),
-                                    "source": entry.get("source", "anima"),
-                                },
-                            })
-                        except (json.JSONDecodeError, TypeError, ValueError):
-                            continue
-            except Exception:
-                logger.warning("Failed to load DM logs", exc_info=True)
-
-        # Sort descending by timestamp
-        events.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
-
-        # Apply type filter
-        if type_filter:
-            events = [e for e in events if e["type"] in type_filter]
-
-        # Pagination
-        total = len(events)
-        paginated = events[offset:offset + limit]
+        # Apply pagination across merged results
+        limit = max(1, min(limit, 500))
+        offset = max(0, offset)
+        total = len(all_entries)
+        page_entries = all_entries[offset:offset + limit]
 
         return {
-            "events": paginated,
+            "events": [e.to_api_dict() for e in page_entries],
             "total": total,
             "offset": offset,
             "limit": limit,

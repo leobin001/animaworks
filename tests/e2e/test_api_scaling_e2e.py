@@ -233,7 +233,7 @@ class TestAnimasParallelIOE2E:
 
 
 class TestActivityEndpointE2E:
-    """Verify /api/activity/recent uses animas_dir, not app.state.animas."""
+    """Verify /api/activity/recent reads from ActivityLogger JSONL files."""
 
     async def test_activity_empty_returns_200(self, tmp_path):
         """Activity endpoint with no animas should return 200 with empty events."""
@@ -245,41 +245,60 @@ class TestActivityEndpointE2E:
         assert resp.status_code == 200
         data = resp.json()
         assert data["events"] == []
+        assert data["total"] == 0
+        assert data["offset"] == 0
+        assert data["limit"] == 200
 
     async def test_activity_with_anima_returns_200(self, tmp_path):
-        """Activity endpoint with an anima should return 200 (no 500 error)."""
+        """Activity endpoint with an anima should return 200 with activity_log data."""
+        from datetime import datetime, timezone
+
         animas_dir = tmp_path / "animas"
-        _create_anima_on_disk(animas_dir, "alice")
+        anima_dir = _create_anima_on_disk(animas_dir, "alice")
+
+        # Write activity_log data
+        now = datetime.now(timezone.utc)
+        log_dir = anima_dir / "activity_log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        entry = json.dumps({
+            "ts": now.isoformat(),
+            "type": "heartbeat_start",
+            "summary": "Regular check-in",
+            "content": "",
+        }, ensure_ascii=False)
+        date_str = now.isoformat()[:10]
+        (log_dir / f"{date_str}.jsonl").write_text(entry + "\n", encoding="utf-8")
 
         app = _create_app(tmp_path, anima_names=["alice"])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/activity/recent?anima=alice")
 
-        # This previously returned 500 due to app.state.animas KeyError
         assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] >= 1
+        assert data["events"][0]["anima"] == "alice"
+        assert data["events"][0]["type"] == "heartbeat_start"
+        assert "id" in data["events"][0]
 
-    async def test_activity_with_session_archive(self, tmp_path):
-        """Activity should include session events from shortterm archives."""
+    async def test_activity_from_activity_log(self, tmp_path):
+        """Activity reads from activity_log JSONL files and returns new format."""
         from datetime import datetime, timezone
 
         animas_dir = tmp_path / "animas"
         anima_dir = _create_anima_on_disk(animas_dir, "alice")
 
-        # Create a session archive with a recent timestamp (within query window)
-        archive_dir = anima_dir / "shortterm" / "archive"
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        recent_ts = datetime.now(timezone.utc).isoformat()
-        session = {
-            "timestamp": recent_ts,
-            "trigger": "heartbeat",
-            "original_prompt": "Regular check-in",
-            "turn_count": 3,
-            "context_usage_ratio": 0.2,
-        }
-        (archive_dir / "20260217_100000.json").write_text(
-            json.dumps(session), encoding="utf-8",
-        )
+        now = datetime.now(timezone.utc)
+        log_dir = anima_dir / "activity_log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        entries = [
+            {"ts": now.isoformat(), "type": "heartbeat_start", "summary": "HB start", "content": ""},
+            {"ts": now.isoformat(), "type": "tool_use", "summary": "web_search", "content": "", "tool": "web_search"},
+            {"ts": now.isoformat(), "type": "dm_sent", "summary": "Hello", "content": "Hello", "from": "alice", "to": "bob"},
+        ]
+        date_str = now.isoformat()[:10]
+        lines = [json.dumps(e, ensure_ascii=False) for e in entries]
+        (log_dir / f"{date_str}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
         app = _create_app(tmp_path, anima_names=["alice"])
         transport = ASGITransport(app=app)
@@ -288,6 +307,14 @@ class TestActivityEndpointE2E:
 
         assert resp.status_code == 200
         data = resp.json()
-        session_events = [e for e in data["events"] if e["type"] == "session"]
-        assert len(session_events) >= 1
-        assert session_events[0]["animas"] == ["alice"]
+        assert data["total"] == 3
+        # All events should use the new format
+        for evt in data["events"]:
+            assert "id" in evt
+            assert "ts" in evt
+            assert "anima" in evt
+            assert evt["anima"] == "alice"
+        types = {e["type"] for e in data["events"]}
+        assert "heartbeat_start" in types
+        assert "tool_use" in types
+        assert "dm_sent" in types
