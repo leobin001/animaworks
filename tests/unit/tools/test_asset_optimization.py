@@ -2,10 +2,386 @@
 from __future__ import annotations
 
 import argparse
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
 import pytest
+
+
+# ── _ensure_fbx2gltf ────────────────────────────────────────────
+
+
+class TestEnsureFbx2gltf:
+    """Tests for _ensure_fbx2gltf binary resolution and installation."""
+
+    def _reset_cache(self):
+        """Reset module-level _FBX2GLTF_PATH cache between tests."""
+        import core.tools.image_gen as mod
+        mod._FBX2GLTF_PATH = None
+
+    def test_returns_cached_path(self, tmp_path):
+        """Should return immediately when _FBX2GLTF_PATH is set and exists."""
+        import core.tools.image_gen as mod
+        from core.tools.image_gen import _ensure_fbx2gltf
+
+        cached = tmp_path / "fbx2gltf"
+        cached.touch()
+        mod._FBX2GLTF_PATH = cached
+        try:
+            result = _ensure_fbx2gltf()
+            assert result == cached
+        finally:
+            self._reset_cache()
+
+    def test_finds_system_binary(self):
+        """Should use system binary when shutil.which('FBX2glTF') returns a path."""
+        from core.tools.image_gen import _ensure_fbx2gltf
+
+        self._reset_cache()
+        try:
+            with patch("shutil.which", return_value="/usr/local/bin/FBX2glTF"):
+                result = _ensure_fbx2gltf()
+                assert result == Path("/usr/local/bin/FBX2glTF")
+        finally:
+            self._reset_cache()
+
+    def test_installs_via_npm(self, tmp_path):
+        """Should run npm install and return bin path when not found elsewhere."""
+        from core.tools.image_gen import _ensure_fbx2gltf
+
+        self._reset_cache()
+        # Prepare path but do NOT create the candidate yet — it should only
+        # appear after npm install runs.
+        bin_dir = tmp_path / "cache" / "fbx2gltf" / "node_modules" / ".bin"
+        candidate = bin_dir / "fbx2gltf"
+
+        def fake_npm_install(*args, **kwargs):
+            """Simulate npm install creating the binary."""
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            candidate.touch()
+            return MagicMock(returncode=0)
+
+        try:
+            with patch("shutil.which", return_value=None):
+                with patch("core.paths.get_data_dir", return_value=tmp_path):
+                    with patch("subprocess.run", side_effect=fake_npm_install) as mock_run:
+                        result = _ensure_fbx2gltf()
+
+                        assert result == candidate
+                        mock_run.assert_called_once()
+                        cmd = mock_run.call_args.args[0]
+                        assert "npm" in cmd
+                        assert "install" in cmd
+                        assert "fbx2gltf" in cmd
+        finally:
+            self._reset_cache()
+
+    def test_returns_none_on_install_failure(self, tmp_path):
+        """Should return None when npm install fails."""
+        from core.tools.image_gen import _ensure_fbx2gltf
+
+        self._reset_cache()
+        try:
+            with patch("shutil.which", return_value=None):
+                with patch("core.paths.get_data_dir", return_value=tmp_path):
+                    with patch("subprocess.run", side_effect=RuntimeError("npm not found")):
+                        result = _ensure_fbx2gltf()
+                        assert result is None
+        finally:
+            self._reset_cache()
+
+
+# ── _convert_fbx_to_glb ─────────────────────────────────────────
+
+
+class TestConvertFbxToGlb:
+    """Tests for _convert_fbx_to_glb FBX-to-GLB conversion."""
+
+    def test_returns_false_when_fbx2gltf_not_found(self):
+        """Should return False when _ensure_fbx2gltf() returns None."""
+        from core.tools.image_gen import _convert_fbx_to_glb
+
+        with patch("core.tools.image_gen._ensure_fbx2gltf", return_value=None):
+            result = _convert_fbx_to_glb(Path("/tmp/test.fbx"), Path("/tmp/test.glb"))
+            assert result is False
+
+    def test_calls_fbx2gltf_binary(self, tmp_path):
+        """Should call fbx2gltf binary with correct arguments."""
+        from core.tools.image_gen import _convert_fbx_to_glb
+
+        fbx_path = tmp_path / "test.fbx"
+        glb_path = tmp_path / "test.glb"
+        fbx_path.write_bytes(b"fake-fbx")
+        # Simulate fbx2gltf creating the output file
+        glb_path.write_bytes(b"fake-glb")
+
+        with patch("core.tools.image_gen._ensure_fbx2gltf", return_value=Path("/usr/bin/fbx2gltf")):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                result = _convert_fbx_to_glb(fbx_path, glb_path)
+
+                assert result is True
+                mock_run.assert_called_once()
+                cmd = mock_run.call_args.args[0]
+                assert cmd[0] == "/usr/bin/fbx2gltf"
+                assert "--binary" in cmd
+                assert "--input" in cmd
+                assert str(fbx_path) in cmd
+                assert "--output" in cmd
+                assert str(glb_path) in cmd
+
+    def test_returns_false_on_subprocess_error(self):
+        """Should return False when subprocess raises CalledProcessError."""
+        import subprocess
+        from core.tools.image_gen import _convert_fbx_to_glb
+
+        with patch("core.tools.image_gen._ensure_fbx2gltf", return_value=Path("/usr/bin/fbx2gltf")):
+            with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "fbx2gltf")):
+                result = _convert_fbx_to_glb(Path("/tmp/test.fbx"), Path("/tmp/test.glb"))
+                assert result is False
+
+    def test_returns_false_on_timeout(self):
+        """Should return False when subprocess times out."""
+        import subprocess
+        from core.tools.image_gen import _convert_fbx_to_glb
+
+        with patch("core.tools.image_gen._ensure_fbx2gltf", return_value=Path("/usr/bin/fbx2gltf")):
+            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("fbx2gltf", 120)):
+                result = _convert_fbx_to_glb(Path("/tmp/test.fbx"), Path("/tmp/test.glb"))
+                assert result is False
+
+
+# ── _download_armature_animation ─────────────────────────────────
+
+
+class TestDownloadArmatureAnimation:
+    """Tests for _download_armature_animation with fallback logic."""
+
+    def test_downloads_armature_fbx_and_converts(self, tmp_path):
+        """Happy path: armature URL present, FBX downloaded, conversion succeeds."""
+        from core.tools.image_gen import _download_armature_animation
+
+        glb_path = tmp_path / "anim_idle.glb"
+        task = {
+            "result": {
+                "processed_armature_fbx_url": "https://example.com/armature.fbx",
+                "animation_glb_url": "https://example.com/full.glb",
+            }
+        }
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"fake-fbx-data"
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.get", return_value=mock_resp) as mock_get:
+            with patch("core.tools.image_gen._convert_fbx_to_glb", return_value=True) as mock_convert:
+                # Simulate the glb_path existing after conversion for stat()
+                glb_path.write_bytes(b"converted-glb")
+                result = _download_armature_animation(task, glb_path)
+
+                assert result is True
+                # httpx.get called with armature URL
+                mock_get.assert_called_once_with(
+                    "https://example.com/armature.fbx",
+                    timeout=mock_get.call_args.kwargs["timeout"],
+                )
+                # _convert_fbx_to_glb called
+                mock_convert.assert_called_once()
+                convert_args = mock_convert.call_args.args
+                assert str(convert_args[0]).endswith(".fbx")
+                assert convert_args[1] == glb_path
+
+    def test_falls_back_when_no_armature_url(self, tmp_path):
+        """Should fall back to full GLB + strip when no armature URL present."""
+        from core.tools.image_gen import _download_armature_animation
+
+        glb_path = tmp_path / "anim_idle.glb"
+        task = {
+            "result": {
+                "animation_glb_url": "https://example.com/full.glb",
+            }
+        }
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"full-glb-data"
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.get", return_value=mock_resp) as mock_get:
+            with patch("core.tools.image_gen.strip_mesh_from_glb", return_value=True) as mock_strip:
+                result = _download_armature_animation(task, glb_path)
+
+                assert result is True
+                # Should have downloaded full GLB
+                mock_get.assert_called_once()
+                url_called = mock_get.call_args.args[0]
+                assert url_called == "https://example.com/full.glb"
+                # Should have stripped mesh
+                mock_strip.assert_called_once_with(glb_path)
+                # GLB file should be written
+                assert glb_path.read_bytes() == b"full-glb-data"
+
+    def test_falls_back_when_conversion_fails(self, tmp_path):
+        """Should fall back to full GLB + strip when fbx2gltf conversion fails."""
+        from core.tools.image_gen import _download_armature_animation
+
+        glb_path = tmp_path / "anim_idle.glb"
+        task = {
+            "result": {
+                "processed_armature_fbx_url": "https://example.com/armature.fbx",
+                "animation_glb_url": "https://example.com/full.glb",
+            }
+        }
+
+        call_count = 0
+
+        def mock_get_side_effect(url, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            if "armature" in url:
+                resp.content = b"fake-fbx"
+            else:
+                resp.content = b"full-glb-data"
+            return resp
+
+        with patch("httpx.get", side_effect=mock_get_side_effect):
+            with patch("core.tools.image_gen._convert_fbx_to_glb", return_value=False):
+                with patch("core.tools.image_gen.strip_mesh_from_glb", return_value=True) as mock_strip:
+                    result = _download_armature_animation(task, glb_path)
+
+                    assert result is True
+                    # Two HTTP calls: armature FBX + fallback full GLB
+                    assert call_count == 2
+                    mock_strip.assert_called_once_with(glb_path)
+
+    def test_falls_back_when_download_fails(self, tmp_path):
+        """Should fall back when armature FBX download raises an exception."""
+        from core.tools.image_gen import _download_armature_animation
+
+        glb_path = tmp_path / "anim_idle.glb"
+        task = {
+            "result": {
+                "processed_armature_fbx_url": "https://example.com/armature.fbx",
+                "animation_glb_url": "https://example.com/full.glb",
+            }
+        }
+
+        call_count = 0
+
+        def mock_get_side_effect(url, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if "armature" in url:
+                raise httpx.HTTPStatusError(
+                    "404 Not Found", request=MagicMock(), response=MagicMock(),
+                )
+            resp = MagicMock()
+            resp.content = b"full-glb-data"
+            resp.raise_for_status = MagicMock()
+            return resp
+
+        import httpx
+
+        with patch("httpx.get", side_effect=mock_get_side_effect):
+            with patch("core.tools.image_gen.strip_mesh_from_glb", return_value=True) as mock_strip:
+                result = _download_armature_animation(task, glb_path)
+
+                assert result is True
+                assert call_count == 2
+                mock_strip.assert_called_once_with(glb_path)
+
+    def test_returns_false_when_no_urls(self):
+        """Should return False when neither armature nor GLB URL is available."""
+        from core.tools.image_gen import _download_armature_animation
+
+        task = {"result": {}}
+        result = _download_armature_animation(task, Path("/tmp/anim.glb"))
+        assert result is False
+
+    def test_cleans_up_temp_fbx(self, tmp_path):
+        """Should delete the temporary FBX file even on conversion failure."""
+        from core.tools.image_gen import _download_armature_animation
+
+        glb_path = tmp_path / "anim_idle.glb"
+        task = {
+            "result": {
+                "processed_armature_fbx_url": "https://example.com/armature.fbx",
+                "animation_glb_url": "https://example.com/full.glb",
+            }
+        }
+
+        created_fbx_paths: list[Path] = []
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"fake-fbx"
+        mock_resp.raise_for_status = MagicMock()
+
+        # Track the temp FBX path created by _download_armature_animation
+        original_named_temp = tempfile.NamedTemporaryFile
+
+        def tracking_temp(*args, **kwargs):
+            f = original_named_temp(*args, **kwargs)
+            created_fbx_paths.append(Path(f.name))
+            return f
+
+        fallback_resp = MagicMock()
+        fallback_resp.content = b"full-glb"
+        fallback_resp.raise_for_status = MagicMock()
+
+        call_count = 0
+
+        def mock_get_side_effect(url, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if "armature" in url:
+                return mock_resp
+            return fallback_resp
+
+        with patch("httpx.get", side_effect=mock_get_side_effect):
+            with patch("core.tools.image_gen._convert_fbx_to_glb", return_value=False):
+                with patch("core.tools.image_gen.strip_mesh_from_glb", return_value=True):
+                    with patch("tempfile.NamedTemporaryFile", side_effect=tracking_temp):
+                        result = _download_armature_animation(task, glb_path)
+
+        assert result is True
+        # Verify temp FBX was created and then cleaned up
+        assert len(created_fbx_paths) == 1
+        assert not created_fbx_paths[0].exists(), "Temp FBX file was not cleaned up"
+
+
+# ── create_animation_task post_process ───────────────────────────
+
+
+class TestCreateAnimationTaskPostProcess:
+    """Tests for create_animation_task extract_armature post_process parameter."""
+
+    def _make_client(self):
+        with patch("core.tools.image_gen.get_credential", return_value="test-key"):
+            from core.tools.image_gen import MeshyClient
+            return MeshyClient()
+
+    def test_includes_extract_armature(self):
+        """Should include post_process with operation_type extract_armature in request body."""
+        client = self._make_client()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"result": "task-123"}
+
+        with patch("httpx.post", return_value=mock_resp) as mock_post:
+            result = client.create_animation_task("rig-001", 42)
+
+            assert result == "task-123"
+            mock_post.assert_called_once()
+            call_kwargs = mock_post.call_args
+            body = call_kwargs.kwargs.get("json") or call_kwargs.args[1] if len(call_kwargs.args) > 1 else call_kwargs.kwargs["json"]
+            assert "post_process" in body
+            assert body["post_process"] == {"operation_type": "extract_armature"}
+            assert body["rig_task_id"] == "rig-001"
+            assert body["action_id"] == 42
 
 
 # ── download_rigging_animations ──────────────────────────────────

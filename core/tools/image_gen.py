@@ -801,6 +801,7 @@ class MeshyClient:
         body: dict[str, Any] = {
             "rig_task_id": rig_task_id,
             "action_id": action_id,
+            "post_process": {"operation_type": "extract_armature"},
         }
 
         def _call() -> str:
@@ -919,6 +920,183 @@ def _ensure_gltf_transform_modules() -> Path:
 
     _GLTF_MODULES_DIR = node_modules
     return node_modules
+
+
+# ── fbx2gltf helpers ──────────────────────────────────────
+
+
+_FBX2GLTF_PATH: Path | None = None
+
+
+def _ensure_fbx2gltf() -> Path | None:
+    """Install fbx2gltf to a persistent cache and return the binary path.
+
+    Resolution order:
+      1. Module-level cached path (fast path).
+      2. System ``PATH`` via ``shutil.which("FBX2glTF")``.
+      3. Persistent npm cache at ``~/.animaworks/cache/fbx2gltf/``.
+      4. Fresh ``npm install --save fbx2gltf`` into the cache directory.
+
+    Returns:
+        Binary path on success, ``None`` if installation fails.
+    """
+    global _FBX2GLTF_PATH  # noqa: PLW0603
+    if _FBX2GLTF_PATH is not None and _FBX2GLTF_PATH.exists():
+        return _FBX2GLTF_PATH
+
+    import shutil
+
+    # Check if already on PATH
+    system_path = shutil.which("FBX2glTF")
+    if system_path:
+        _FBX2GLTF_PATH = Path(system_path)
+        return _FBX2GLTF_PATH
+
+    import subprocess
+
+    from core.paths import get_data_dir
+
+    cache_dir = get_data_dir() / "cache" / "fbx2gltf"
+    node_modules = cache_dir / "node_modules"
+
+    # Check both .bin symlink and platform-specific binary location
+    for found in _find_fbx2gltf_binary(node_modules):
+        _FBX2GLTF_PATH = found
+        return _FBX2GLTF_PATH
+
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["npm", "install", "--save", "fbx2gltf"],
+            cwd=str(cache_dir),
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        for found in _find_fbx2gltf_binary(node_modules):
+            _FBX2GLTF_PATH = found
+            logger.info("Installed fbx2gltf to %s", cache_dir)
+            return _FBX2GLTF_PATH
+    except Exception as exc:
+        logger.warning("Failed to install fbx2gltf: %s", exc)
+    return None
+
+
+def _find_fbx2gltf_binary(node_modules: Path):
+    """Yield fbx2gltf binary paths if they exist.
+
+    The npm ``fbx2gltf`` package places the binary at a platform-specific
+    path (e.g. ``node_modules/fbx2gltf/bin/Linux/FBX2glTF``) rather than
+    the standard ``node_modules/.bin/`` symlink.
+    """
+    import platform
+
+    # Standard .bin symlink
+    candidate = node_modules / ".bin" / "fbx2gltf"
+    if candidate.exists():
+        yield candidate
+
+    # Platform-specific binary (Linux, Darwin, Windows)
+    os_name = platform.system()  # "Linux", "Darwin", "Windows"
+    candidate = node_modules / "fbx2gltf" / "bin" / os_name / "FBX2glTF"
+    if candidate.exists():
+        yield candidate
+
+
+def _convert_fbx_to_glb(fbx_path: Path, glb_path: Path) -> bool:
+    """Convert an FBX file to GLB using fbx2gltf.
+
+    Args:
+        fbx_path: Source FBX file.
+        glb_path: Destination GLB file.
+
+    Returns:
+        ``True`` on success, ``False`` on failure.
+    """
+    import subprocess
+
+    fbx2gltf = _ensure_fbx2gltf()
+    if fbx2gltf is None:
+        return False
+    try:
+        subprocess.run(
+            [str(fbx2gltf), "--binary", "--input", str(fbx_path),
+             "--output", str(glb_path)],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        return glb_path.exists()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        logger.warning("fbx2gltf conversion failed for %s: %s", fbx_path, exc)
+        return False
+
+
+def _download_armature_animation(
+    task: dict[str, Any],
+    glb_path: Path,
+) -> bool:
+    """Download armature-only animation, converting from FBX if available.
+
+    Tries the optimised path first: ``processed_armature_fbx_url`` (small,
+    ~10-50 KB) downloaded as FBX then converted to GLB via *fbx2gltf*.
+
+    Falls back to the legacy path on any failure: full-mesh GLB download
+    followed by :func:`strip_mesh_from_glb`.
+
+    Args:
+        task: Completed animation task dict from Meshy API.
+        glb_path: Destination path for the final ``.glb`` file.
+
+    Returns:
+        ``True`` when a usable GLB was written, ``False`` on total failure.
+    """
+    import tempfile
+
+    result = task.get("result", {})
+    armature_url = result.get("processed_armature_fbx_url")
+
+    if armature_url:
+        fbx_path: Path | None = None
+        try:
+            resp = httpx.get(armature_url, timeout=_DOWNLOAD_TIMEOUT)
+            resp.raise_for_status()
+            with tempfile.NamedTemporaryFile(
+                suffix=".fbx", delete=False,
+            ) as f:
+                f.write(resp.content)
+                fbx_path = Path(f.name)
+            if _convert_fbx_to_glb(fbx_path, glb_path):
+                logger.info(
+                    "Armature animation converted: %s (%d bytes)",
+                    glb_path,
+                    glb_path.stat().st_size,
+                )
+                return True
+        except Exception as exc:
+            logger.warning(
+                "Armature download/conversion failed for %s, falling back: %s",
+                glb_path.name,
+                exc,
+            )
+        finally:
+            if fbx_path is not None:
+                fbx_path.unlink(missing_ok=True)
+
+    # ── Fallback: full GLB + strip ──
+    logger.warning(
+        "Falling back to full GLB download + strip for %s", glb_path.name,
+    )
+    glb_url = result.get("animation_glb_url")
+    if not glb_url:
+        logger.error("No animation URL available for %s", glb_path.name)
+        return False
+    resp = httpx.get(glb_url, timeout=_DOWNLOAD_TIMEOUT)
+    resp.raise_for_status()
+    glb_path.write_bytes(resp.content)
+    if not strip_mesh_from_glb(glb_path):
+        logger.warning("Fallback strip also failed for %s", glb_path.name)
+    return True
 
 
 def strip_mesh_from_glb(glb_path: Path) -> bool:
@@ -1532,15 +1710,14 @@ class ImageGenPipeline:
                             anim_name, anim_task_id,
                         )
                         anim_task = meshy.poll_animation_task(anim_task_id)
-                        anim_bytes = meshy.download_animation(anim_task, fmt="glb")
-                        anim_path.write_bytes(anim_bytes)
-                        if not strip_mesh_from_glb(anim_path):
-                            result.errors.append(f"mesh_strip: failed for {anim_path.name}")
-                            logger.warning("Mesh strip failed for %s, animation saved with embedded mesh", anim_path.name)
+                        if not _download_armature_animation(anim_task, anim_path):
+                            raise RuntimeError(
+                                f"All download methods failed for {anim_path.name}"
+                            )
                         result.animation_paths[anim_name] = anim_path
                         logger.info(
                             "Animation '%s' saved: %s (%d bytes)",
-                            anim_name, anim_path, len(anim_bytes),
+                            anim_name, anim_path, anim_path.stat().st_size,
                         )
                     except Exception as exc:
                         result.errors.append(f"anim_{anim_name}: {exc}")

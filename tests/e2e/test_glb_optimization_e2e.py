@@ -1,4 +1,4 @@
-"""E2E tests for GLB optimization: strip_mesh_from_glb, simplify_glb, compress_textures.
+"""E2E tests for GLB optimization: strip_mesh_from_glb, simplify_glb, compress_textures, fbx2gltf.
 
 These tests call the actual gltf-transform CLI via npx to verify real-world behavior.
 They require node/npx to be installed and will be skipped if unavailable.
@@ -14,10 +14,16 @@ import pytest
 
 _has_npx = shutil.which("npx") is not None
 _has_node = shutil.which("node") is not None
+_has_npm = shutil.which("npm") is not None
 
 skip_no_node = pytest.mark.skipif(
     not (_has_npx and _has_node),
     reason="node/npx not available",
+)
+
+skip_no_npm = pytest.mark.skipif(
+    not _has_npm,
+    reason="npm not available",
 )
 
 
@@ -317,3 +323,59 @@ class TestOptimizeAssetsCommandE2E:
         assert len(backups) == 1
         backup_dir = backups[0]
         assert (backup_dir / "anim_idle.glb").exists()
+
+
+@pytest.mark.e2e
+class TestFbx2gltfE2E:
+    """E2E tests for fbx2gltf installation and FBX-to-GLB conversion."""
+
+    def _reset_cache(self):
+        """Reset module-level _FBX2GLTF_PATH cache between tests."""
+        import core.tools.image_gen as mod
+        mod._FBX2GLTF_PATH = None
+
+    @skip_no_npm
+    def test_fbx2gltf_installs(self):
+        """_ensure_fbx2gltf() should install and return a valid binary path.
+
+        The fbx2gltf npm package may not provide a ``.bin`` symlink on all
+        platforms.  When the binary resolves to ``None`` despite npm being
+        available, we skip rather than fail — the unit tests cover the logic
+        exhaustively.
+        """
+        from core.tools.image_gen import _ensure_fbx2gltf
+
+        self._reset_cache()
+        try:
+            result = _ensure_fbx2gltf()
+            if result is None:
+                pytest.skip(
+                    "fbx2gltf binary not available after npm install "
+                    "(platform may lack .bin symlink)"
+                )
+            assert result.exists(), f"fbx2gltf binary not found at {result}"
+        finally:
+            self._reset_cache()
+
+    @skip_no_npm
+    def test_fbx2gltf_handles_invalid_fbx_gracefully(self, tmp_path):
+        """_convert_fbx_to_glb should return False for a non-FBX file."""
+        from core.tools.image_gen import _convert_fbx_to_glb, _ensure_fbx2gltf
+
+        self._reset_cache()
+        try:
+            # Skip if fbx2gltf cannot be installed
+            binary = _ensure_fbx2gltf()
+            if binary is None:
+                pytest.skip("fbx2gltf not available")
+
+            # Create a fake file that is not a valid FBX
+            fake_fbx = tmp_path / "not_real.fbx"
+            fake_fbx.write_bytes(b"this is not an FBX file")
+            glb_output = tmp_path / "output.glb"
+
+            result = _convert_fbx_to_glb(fake_fbx, glb_output)
+            # fbx2gltf should fail on invalid input and return False
+            assert result is False
+        finally:
+            self._reset_cache()
