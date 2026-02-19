@@ -1,7 +1,7 @@
 # AnimaWorks 機能一覧
 
 > 最終更新: 2026-02-18
-> 関連: [spec.md](spec.md), [memory.md](memory.md), [vision.md](vision.md)
+> 関連: [spec.md](spec.md), [memory.ja.md](memory.ja.md), [vision.ja.md](vision.ja.md)
 
 AnimaWorksフレームワークの実装済み機能を18カテゴリに分類した索引。各エントリの「設計」リンクは設計・実装文書、「Review」リンクはコードレビューレポートを参照する。
 

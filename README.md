@@ -256,6 +256,7 @@ The core insight — that imperfect individuals collaborating through structure 
 ## Design Philosophy
 
 For detailed design principles, see [vision.md](docs/vision.md).
+For the memory system design, see [memory.md](docs/memory.md).
 For technical specifications, see [spec.md](docs/spec.md).
 
 ## License

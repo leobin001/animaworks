@@ -428,7 +428,8 @@ class AgentCore:
 
         try:
             if not hasattr(self, "_priming_engine"):
-                self._priming_engine = PrimingEngine(self.anima_dir)
+                from core.paths import get_shared_dir
+                self._priming_engine = PrimingEngine(self.anima_dir, get_shared_dir())
             result = await self._priming_engine.prime_memories(message, sender_name)
 
             if result.is_empty():
