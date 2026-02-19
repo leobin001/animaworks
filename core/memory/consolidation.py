@@ -64,15 +64,18 @@ class ConsolidationEngine:
     - Weekly integration: Knowledge merging and episode compression
     """
 
-    def __init__(self, anima_dir: Path, anima_name: str) -> None:
+    def __init__(self, anima_dir: Path, anima_name: str, *, rag_store: Any | None = None) -> None:
         """Initialize consolidation engine.
 
         Args:
             anima_dir: Path to anima's directory (~/.animaworks/animas/{name})
             anima_name: Name of the anima for logging
+            rag_store: Optional shared RAG vector store instance.
+                When provided, avoids re-creating the singleton internally.
         """
         self.anima_dir = anima_dir
         self.anima_name = anima_name
+        self._rag_store = rag_store
         self.episodes_dir = anima_dir / "episodes"
         self.knowledge_dir = anima_dir / "knowledge"
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
@@ -577,7 +580,7 @@ class ConsolidationEngine:
 
             from core.memory.rag import MemoryIndexer
 
-            vector_store = get_vector_store()
+            vector_store = self._rag_store or get_vector_store()
             indexer = MemoryIndexer(vector_store, self.anima_name, self.anima_dir)
             retriever = MemoryRetriever(
                 vector_store, indexer, self.knowledge_dir,
@@ -1046,7 +1049,7 @@ class ConsolidationEngine:
             from core.memory.rag import MemoryIndexer
             from core.memory.rag.singleton import get_vector_store
 
-            vector_store = get_vector_store()
+            vector_store = self._rag_store or get_vector_store()
             indexer = MemoryIndexer(vector_store, self.anima_name, self.anima_dir)
 
             for filename in filenames:
@@ -1195,7 +1198,7 @@ class ConsolidationEngine:
             from core.memory.rag.retriever import MemoryRetriever
             from core.memory.rag.singleton import get_vector_store
 
-            vector_store = get_vector_store()
+            vector_store = self._rag_store or get_vector_store()
             indexer = MemoryIndexer(vector_store, self.anima_name, self.anima_dir)
             retriever = MemoryRetriever(vector_store, indexer, self.knowledge_dir)
 
@@ -1459,7 +1462,7 @@ class ConsolidationEngine:
             from core.memory.rag import MemoryIndexer
             from core.memory.rag.singleton import get_vector_store
 
-            vector_store = get_vector_store()
+            vector_store = self._rag_store or get_vector_store()
             indexer = MemoryIndexer(vector_store, self.anima_name, self.anima_dir)
 
             # Re-index all knowledge files

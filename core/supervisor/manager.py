@@ -980,9 +980,18 @@ class ProcessSupervisor:
             try:
                 from core.memory.consolidation import ConsolidationEngine
 
+                # Inject shared RAG store to avoid independent re-creation
+                rag_store = None
+                try:
+                    from core.memory.rag.singleton import get_vector_store
+                    rag_store = get_vector_store()
+                except Exception:
+                    logger.debug("RAG store not available for consolidation")
+
                 engine = ConsolidationEngine(
                     anima_dir=anima_dir,
                     anima_name=anima_name,
+                    rag_store=rag_store,
                 )
 
                 result = await engine.daily_consolidate(
@@ -1023,9 +1032,18 @@ class ProcessSupervisor:
             try:
                 from core.memory.consolidation import ConsolidationEngine
 
+                # Inject shared RAG store to avoid independent re-creation
+                rag_store = None
+                try:
+                    from core.memory.rag.singleton import get_vector_store
+                    rag_store = get_vector_store()
+                except Exception:
+                    logger.debug("RAG store not available for consolidation")
+
                 engine = ConsolidationEngine(
                     anima_dir=anima_dir,
                     anima_name=anima_name,
+                    rag_store=rag_store,
                 )
 
                 result = await engine.weekly_integrate(

@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────
 IPC_BUFFER_LIMIT = 16 * 1024 * 1024  # 16MB — default asyncio limit is 64KB
+IPC_CHUNK_MAX = 1 * 1024 * 1024      # 1MB — max chunk for socket writes
 
 
 # ── Protocol Types ──────────────────────────────────────────────────
@@ -164,6 +165,30 @@ class IPCServer:
         )
         logger.info("IPC server started on %s", self.socket_path)
 
+    @staticmethod
+    async def _chunked_write(
+        writer: asyncio.StreamWriter,
+        data: bytes,
+    ) -> None:
+        """Write *data* to *writer*, splitting into IPC_CHUNK_MAX-sized pieces.
+
+        For large JSON lines (e.g. RAG search results that can be several MB),
+        writing the entire payload in one ``writer.write()`` call may overflow
+        the OS send buffer.  This helper writes in manageable pieces with an
+        ``await writer.drain()`` between each to let the kernel flush.
+        """
+        if len(data) <= IPC_CHUNK_MAX:
+            writer.write(data)
+            await writer.drain()
+            return
+
+        offset = 0
+        while offset < len(data):
+            end = min(offset + IPC_CHUNK_MAX, len(data))
+            writer.write(data[offset:end])
+            await writer.drain()
+            offset = end
+
     async def _handle_connection(
         self,
         reader: asyncio.StreamReader,
@@ -193,13 +218,11 @@ class IPCServer:
                     # Check if result is an async iterator (streaming)
                     if hasattr(handler_result, "__aiter__"):
                         async for response in handler_result:
-                            response_line = response.to_json() + "\n"
-                            writer.write(response_line.encode("utf-8"))
-                            await writer.drain()
+                            response_data = (response.to_json() + "\n").encode("utf-8")
+                            await self._chunked_write(writer, response_data)
                     else:
-                        response_line = handler_result.to_json() + "\n"
-                        writer.write(response_line.encode("utf-8"))
-                        await writer.drain()
+                        response_data = (handler_result.to_json() + "\n").encode("utf-8")
+                        await self._chunked_write(writer, response_data)
 
                 except json.JSONDecodeError as e:
                     logger.error("Invalid JSON in IPC request: %s", e)
@@ -326,6 +349,10 @@ class IPCClient:
         Each intermediate chunk has stream=True and a chunk field.
         The final response has stream=True, done=True, and a result field.
 
+        The first readline uses a generous timeout (``max(timeout, 120s)``)
+        because the initial response may carry large payloads such as RAG
+        search results.  Subsequent chunks use the normal *timeout*.
+
         Args:
             request: The request to send
             timeout: Per-chunk timeout in seconds. Resets on each received chunk.
@@ -349,28 +376,34 @@ class IPCClient:
         _ipc_start = _time.monotonic()
         chunk_count = 0
 
+        # The first chunk may include large RAG data, so allow extra time.
+        first_chunk_timeout = max(timeout, 120.0)
+
         async with self._lock:
             # Send request
             request_line = request.to_json() + "\n"
             self.writer.write(request_line.encode("utf-8"))
             await self.writer.drain()
             logger.info(
-                "[IPC-STREAM] request sent method=%s id=%s timeout=%.1fs socket=%s",
-                request.method, request.id, timeout, self.socket_path,
+                "[IPC-STREAM] request sent method=%s id=%s timeout=%.1fs first_chunk_timeout=%.1fs socket=%s",
+                request.method, request.id, timeout, first_chunk_timeout, self.socket_path,
             )
 
             # Read streaming responses until done
             while True:
+                # Use generous timeout for the first chunk (large RAG payloads),
+                # then normal per-chunk timeout for subsequent chunks.
+                effective_timeout = first_chunk_timeout if chunk_count == 0 else timeout
                 try:
                     response_line_bytes = await asyncio.wait_for(
                         self.reader.readline(),
-                        timeout=timeout,
+                        timeout=effective_timeout,
                     )
                 except asyncio.TimeoutError:
                     elapsed = _time.monotonic() - _ipc_start
                     logger.info(
-                        "[IPC-STREAM] TIMEOUT method=%s id=%s chunks=%d elapsed=%.1fs per_chunk_timeout=%.1fs",
-                        request.method, request.id, chunk_count, elapsed, timeout,
+                        "[IPC-STREAM] TIMEOUT method=%s id=%s chunks=%d elapsed=%.1fs effective_timeout=%.1fs",
+                        request.method, request.id, chunk_count, elapsed, effective_timeout,
                     )
                     raise
                 if not response_line_bytes:

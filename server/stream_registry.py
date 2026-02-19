@@ -47,6 +47,7 @@ class ResponseStream:
     _new_event: asyncio.Event = field(
         default_factory=asyncio.Event, repr=False,
     )
+    _notify_seq: int = field(default=0, repr=False)
 
     def add_event(self, event: str, payload: dict[str, Any]) -> SSEEvent:
         """Append an event to the buffer and return it."""
@@ -96,7 +97,8 @@ class ResponseStream:
                 self.response_id, seq, len(payload.get("text", "")), len(self.full_text),
             )
 
-        # Notify waiters
+        # Notify waiters — increment seq THEN set event (waiter checks seq)
+        self._notify_seq += 1
         self._new_event.set()
         self._new_event.clear()
 
@@ -118,13 +120,29 @@ class ResponseStream:
         return self._seq_counter - 1 if self.events else -1
 
     async def wait_new_event(self, timeout: float = 30.0) -> bool:
-        """Wait for a new event. Returns False on timeout."""
+        """Wait for a new event. Returns False on timeout.
+
+        Uses a sequence counter to avoid the race where set()+clear()
+        fires before the waiter's await runs.  Even if the Event is
+        already cleared, the changed ``_notify_seq`` tells us a new
+        event arrived.
+        """
         logger.info(
             "[SSE-WAIT] wait_new_event stream=%s timeout=%.1fs complete=%s seq=%d",
             self.response_id, timeout, self.complete, self._seq_counter - 1,
         )
+        seen_seq = self._notify_seq
+        deadline = asyncio.get_event_loop().time() + timeout
         try:
-            await asyncio.wait_for(self._new_event.wait(), timeout=timeout)
+            while self._notify_seq == seen_seq:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    logger.info(
+                        "[SSE-WAIT] timeout stream=%s after=%.1fs complete=%s",
+                        self.response_id, timeout, self.complete,
+                    )
+                    return False
+                await asyncio.wait_for(self._new_event.wait(), timeout=remaining)
             logger.info(
                 "[SSE-WAIT] got_event stream=%s new_seq=%d",
                 self.response_id, self._seq_counter - 1,
