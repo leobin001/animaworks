@@ -499,7 +499,7 @@ TASK_TOOLS: list[dict[str, Any]] = [
                 },
                 "deadline": {
                     "type": "string",
-                    "description": "期限（ISO8601形式、任意）",
+                    "description": "期限（必須）。相対形式 '30m','2h','1d' またはISO8601。例: '1h' = 1時間後",
                 },
                 "relay_chain": {
                     "type": "array",
@@ -507,7 +507,7 @@ TASK_TOOLS: list[dict[str, Any]] = [
                     "description": "委任経路（例: ['taka', 'sakura', 'rin']）",
                 },
             },
-            "required": ["source", "original_instruction", "assignee", "summary"],
+            "required": ["source", "original_instruction", "assignee", "summary", "deadline"],
         },
     },
     {

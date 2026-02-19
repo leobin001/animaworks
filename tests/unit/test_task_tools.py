@@ -22,6 +22,7 @@ class TestTaskToolSchemas:
         assert "original_instruction" in required
         assert "assignee" in required
         assert "summary" in required
+        assert "deadline" in required
 
     def test_update_task_schema(self):
         update_task = next(t for t in TASK_TOOLS if t["name"] == "update_task")
@@ -65,6 +66,7 @@ class TestTaskToolHandler:
             "original_instruction": "Test instruction",
             "assignee": "rin",
             "summary": "Test summary",
+            "deadline": "1h",
         })
         data = json.loads(result)
         assert data["source"] == "human"
@@ -77,6 +79,7 @@ class TestTaskToolHandler:
             "source": "human",
             "assignee": "rin",
             "summary": "s",
+            "deadline": "1h",
         })
         data = json.loads(result)
         assert data["status"] == "error"
@@ -88,6 +91,7 @@ class TestTaskToolHandler:
             "original_instruction": "test",
             "assignee": "rin",
             "summary": "s",
+            "deadline": "1h",
         }))
         task_id = add_result["task_id"]
 
@@ -113,12 +117,14 @@ class TestTaskToolHandler:
             "original_instruction": "t1",
             "assignee": "a",
             "summary": "s1",
+            "deadline": "1h",
         })
         handler.handle("add_task", {
             "source": "anima",
             "original_instruction": "t2",
             "assignee": "b",
             "summary": "s2",
+            "deadline": "2h",
         })
         result = json.loads(handler.handle("list_tasks", {}))
         assert len(result) == 2
@@ -129,6 +135,7 @@ class TestTaskToolHandler:
             "original_instruction": "t1",
             "assignee": "a",
             "summary": "s1",
+            "deadline": "1h",
         }))
         handler.handle("update_task", {
             "task_id": add_result["task_id"],
@@ -139,6 +146,7 @@ class TestTaskToolHandler:
             "original_instruction": "t2",
             "assignee": "b",
             "summary": "s2",
+            "deadline": "2h",
         })
         result = json.loads(handler.handle("list_tasks", {"status": "pending"}))
         assert len(result) == 1

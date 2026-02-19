@@ -1099,15 +1099,23 @@ class ToolHandler:
             return _error_result("InvalidArguments", "original_instruction is required")
         if not assignee:
             return _error_result("InvalidArguments", "assignee is required")
+        if not deadline:
+            return _error_result(
+                "InvalidArguments",
+                "deadline is required. Use relative format ('30m', '2h', '1d') or ISO8601.",
+            )
 
-        entry = manager.add_task(
-            source=source,
-            original_instruction=instruction,
-            assignee=assignee,
-            summary=summary,
-            deadline=deadline,
-            relay_chain=relay_chain,
-        )
+        try:
+            entry = manager.add_task(
+                source=source,
+                original_instruction=instruction,
+                assignee=assignee,
+                summary=summary,
+                deadline=deadline,
+                relay_chain=relay_chain,
+            )
+        except ValueError as e:
+            return _error_result("InvalidArguments", str(e))
 
         # Activity log: task created
         try:

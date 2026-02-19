@@ -13,8 +13,9 @@ The current state is reconstructed by replaying the log (latest status wins).
 import json
 import logging
 import os
+import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,81 @@ _VALID_STATUSES = frozenset({"pending", "in_progress", "done", "cancelled", "blo
 _VALID_SOURCES = frozenset({"human", "anima"})
 # Maximum characters for original_instruction
 _MAX_INSTRUCTION_CHARS = 10_000
+# Stale task threshold: 30 minutes (one heartbeat cycle)
+_STALE_TASK_THRESHOLD_SEC = 1800
+# Relative deadline pattern: digits + unit (m=minutes, h=hours, d=days)
+_RELATIVE_DEADLINE_RE = re.compile(r"^(\d+)([mhd])$")
+
+
+def _parse_deadline(value: str) -> str:
+    """Parse deadline string into ISO8601 format.
+
+    Accepts relative formats ("30m", "2h", "1d") or ISO8601 absolute format.
+    Relative formats are resolved to absolute ISO8601 from current time.
+
+    Raises:
+        ValueError: If the format is not recognized.
+    """
+    value = value.strip()
+    m = _RELATIVE_DEADLINE_RE.match(value)
+    if m:
+        amount = int(m.group(1))
+        unit = m.group(2)
+        if unit == "m":
+            delta = timedelta(minutes=amount)
+        elif unit == "h":
+            delta = timedelta(hours=amount)
+        else:  # "d"
+            delta = timedelta(days=amount)
+        return (datetime.now() + delta).isoformat()
+
+    # Try parsing as ISO8601
+    try:
+        datetime.fromisoformat(value)
+        return value
+    except (ValueError, TypeError):
+        raise ValueError(
+            f"Invalid deadline format: {value!r}. "
+            "Use relative format ('30m', '2h', '1d') or ISO8601."
+        )
+
+
+def _elapsed_seconds(updated_at: str, now: datetime) -> float | None:
+    """Return seconds since updated_at, or None on parse failure."""
+    try:
+        updated = datetime.fromisoformat(updated_at)
+        return (now - updated).total_seconds()
+    except (ValueError, TypeError):
+        return None
+
+
+def _format_elapsed_from_sec(elapsed_sec: float | None) -> str:
+    """Format elapsed time as human-readable string (e.g. '⏱️ 47分経過').
+
+    Takes pre-computed elapsed seconds to avoid redundant datetime parsing.
+    Returns empty string for None or negative values.
+    """
+    if elapsed_sec is None or elapsed_sec < 0:
+        return ""
+    minutes = int(elapsed_sec / 60)
+    if minutes < 60:
+        return f"⏱️ {minutes}分経過"
+    hours = minutes // 60
+    remaining_min = minutes % 60
+    if remaining_min:
+        return f"⏱️ {hours}時間{remaining_min}分経過"
+    return f"⏱️ {hours}時間経過"
+
+
+def _format_deadline_display(deadline: str, now: datetime) -> str:
+    """Format deadline for display. Returns OVERDUE marker if past."""
+    try:
+        dl = datetime.fromisoformat(deadline)
+    except (ValueError, TypeError):
+        return ""
+    if now >= dl:
+        return f"🔴 OVERDUE({dl.strftime('%H:%M')}期限)"
+    return f"📅 {dl.strftime('%H:%M')}まで"
 
 
 class TaskQueueManager:
@@ -53,7 +129,7 @@ class TaskQueueManager:
         original_instruction: str,
         assignee: str,
         summary: str,
-        deadline: str | None = None,
+        deadline: str,
         relay_chain: list[str] | None = None,
     ) -> TaskEntry:
         """Add a new task to the queue.
@@ -61,10 +137,15 @@ class TaskQueueManager:
         Returns the created TaskEntry.
 
         Raises:
-            ValueError: If source is not 'human' or 'anima'.
+            ValueError: If source is invalid or deadline is missing/malformed.
         """
         if source not in _VALID_SOURCES:
             raise ValueError(f"Invalid source: {source!r} (must be 'human' or 'anima')")
+        if not deadline:
+            raise ValueError(
+                "deadline is required. Use relative format ('30m', '2h', '1d') or ISO8601."
+            )
+        parsed_deadline = _parse_deadline(deadline)
         if len(original_instruction) > _MAX_INSTRUCTION_CHARS:
             original_instruction = original_instruction[:_MAX_INSTRUCTION_CHARS]
             logger.warning("original_instruction truncated to %d chars", _MAX_INSTRUCTION_CHARS)
@@ -77,7 +158,7 @@ class TaskQueueManager:
             assignee=assignee,
             status="pending",
             summary=summary,
-            deadline=deadline,
+            deadline=parsed_deadline,
             relay_chain=relay_chain or [],
             updated_at=now,
         )
@@ -209,11 +290,13 @@ class TaskQueueManager:
         """Format pending tasks for system prompt injection.
 
         Human-origin tasks are displayed with 🔴 HIGH priority marker.
+        Includes elapsed time, ⚠️ STALE (>30min), and 🔴 OVERDUE markers.
         """
         tasks = self.get_pending()
         if not tasks:
             return ""
 
+        now = datetime.now()
         chars_per_token = 4
         max_chars = budget_tokens * chars_per_token
         lines: list[str] = []
@@ -231,12 +314,39 @@ class TaskQueueManager:
             )
             if task.relay_chain:
                 line += f" chain: {' → '.join(task.relay_chain)}"
+
+            # Elapsed time from updated_at (compute once, reuse)
+            elapsed_sec = _elapsed_seconds(task.updated_at, now)
+            elapsed_str = _format_elapsed_from_sec(elapsed_sec)
+            if elapsed_str:
+                line += f" {elapsed_str}"
+
+            # STALE marker (>30min since updated_at)
+            if elapsed_sec is not None and elapsed_sec >= _STALE_TASK_THRESHOLD_SEC:
+                line += " ⚠️ STALE"
+
+            # Deadline display and OVERDUE marker
+            if task.deadline:
+                deadline_str = _format_deadline_display(task.deadline, now)
+                if deadline_str:
+                    line += f" {deadline_str}"
+
             if total + len(line) > max_chars:
                 break
             lines.append(line)
             total += len(line) + 1
 
         return "\n".join(lines)
+
+    def get_stale_tasks(self) -> list[TaskEntry]:
+        """Return pending/in_progress tasks not updated for 30+ minutes."""
+        now = datetime.now()
+        result: list[TaskEntry] = []
+        for task in self.get_pending():
+            elapsed = _elapsed_seconds(task.updated_at, now)
+            if elapsed is not None and elapsed >= _STALE_TASK_THRESHOLD_SEC:
+                result.append(task)
+        return result
 
     # ── Maintenance ────────────────────────────────────────────
 
@@ -268,7 +378,7 @@ class TaskQueueManager:
             removed = 0
         return removed
 
-    # ── Internal ─────────────────────────────────────────────
+    # ── Internal ─────────────────────────────────────────────────
 
     def _append(self, data: dict[str, Any]) -> None:
         """Append a JSON line to the queue file with fsync."""

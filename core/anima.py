@@ -789,6 +789,25 @@ class DigitalAnima:
                 # NOTE: Task queue is injected via builder.py (system prompt)
                 # and priming Channel E. No separate heartbeat injection needed.
 
+                # ── Delegation check for animas with subordinates ──
+                try:
+                    from core.config.models import load_config
+                    _cfg = load_config()
+                    _subordinates = [
+                        _name for _name, _pcfg in _cfg.animas.items()
+                        if _pcfg.supervisor == self.name
+                    ]
+                    if _subordinates:
+                        parts.append(load_prompt(
+                            "heartbeat_delegation_check",
+                            subordinates=", ".join(_subordinates),
+                        ))
+                except Exception:
+                    logger.debug(
+                        "[%s] Failed to inject delegation check", self.name,
+                        exc_info=True,
+                    )
+
                 # Read unread messages but do NOT archive yet.
                 # Archiving happens after agent processing (or on crash).
                 unread_count = 0
