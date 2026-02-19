@@ -14,6 +14,7 @@
 │   └── ...               # 他の社員
 ├── prompts/          # プロンプトテンプレート（キャラクター設計ガイド等）
 ├── shared/           # 社員間の共有領域
+│   ├── channels/     # Board共有チャネル（general.jsonl, ops.jsonl 等）
 │   ├── credentials.json  # クレデンシャル一元管理（全社員共通）
 │   ├── inbox/        # メッセージ受信箱
 │   └── users/        # 共有ユーザー記憶（ユーザーごとのサブディレクトリ）
