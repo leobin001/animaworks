@@ -1,229 +1,187 @@
 # AnimaWorks
 
-**Organization-as-Code for LLM Agents**
+**Build an AI office where agents work as autonomous people — not tools.**
 
-AnimaWorks treats AI agents not as tools, but as autonomous members of an organization. Each agent (called a "Digital Anima") has its own persistent identity, private memory, and communication channels. They operate autonomously on their own schedules, collaborating through message-passing — the same way human organizations work.
+Each agent has its own name, personality, memory, and schedule. They communicate through messages, make decisions on their own, and collaborate like a real team. You manage them through a web dashboard — or just talk to the leader and let them handle the rest.
 
-> *Imperfect individuals collaborating through structure outperform any single omniscient actor.*
+<!-- TODO: hero screenshot / GIF here -->
 
 **[日本語版 README はこちら](README_ja.md)**
 
-## Core Principles
+---
 
-- **Encapsulation** — Each Anima's internal thoughts and memories are invisible to others. Communication happens only through text messages.
-- **Library-style Memory** — Instead of cramming context into prompts, agents search their own memory archives when they need to remember something.
-- **Autonomy** — Agents don't wait for instructions. They run on their own clocks (heartbeats and cron schedules) and make decisions based on their own values.
+## Quick Start
 
-## Architecture
+**Prerequisites:** Python 3.12+, [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended — no API key needed) or any LLM API key.
 
-```
-┌──────────────────────────────────────────────────────┐
-│            Digital Anima: (Alice)                     │
-├──────────────────────────────────────────────────────┤
-│  Identity ────── Who I am (persistent)               │
-│  Agent Core ──── 4 execution modes                   │
-│    ├ A1: Claude Agent SDK (Claude models)             │
-│    ├ A1 Fallback: Anthropic SDK (when SDK missing)    │
-│    ├ A2: LiteLLM + tool_use (GPT-4o, Gemini, etc.)   │
-│    └ B:  LiteLLM text-based tool loop (Ollama, etc.)   │
-│  Memory ──────── Library-style, self-directed recall  │
-│  Boards ──────── Slack-style shared channels          │
-│  Permissions ─── Tool/file/command restrictions       │
-│  Communication ─ Text + file references               │
-│  Lifecycle ───── Message / heartbeat / cron           │
-│  Injection ───── Role / values / behavioral rules     │
-└──────────────────────────────────────────────────────┘
+```bash
+git clone https://github.com/xuiltul/animaworks.git
+cd animaworks
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
 ```
 
-## Neuroscience-Inspired Memory System
+```bash
+animaworks init     # Opens setup wizard in your browser
+animaworks start    # Start the server
+```
 
-Most AI agent frameworks truncate memory to fit the context window — leaving agents with something resembling amnesia. AnimaWorks takes a different approach: agents maintain a persistent memory archive and **search it when they need to remember**, the way humans retrieve information from long-term storage.
+Open **http://localhost:18500/** — your first Anima is ready. Click to start chatting.
 
-| Directory | Neuroscience Model | Contents |
+**That's it.** Everything from here happens in the browser.
+
+> **Using a different LLM?** Copy `.env.example` to `.env` and add your API key. See [API Key Reference](#api-key-reference) below.
+
+---
+
+## What You Get
+
+### Dashboard
+
+Your command center. See every agent's status, recent activity, and memory stats at a glance.
+
+<!-- TODO: dashboard screenshot -->
+
+- **Chat** — Talk to any Anima with streaming responses, image attachments, and full conversation history
+- **Board** — Slack-style shared channels (#general, #ops, etc.) where Animas discuss and coordinate
+- **Activity** — Real-time timeline of everything happening across your organization
+- **Memory** — Browse each Anima's episodes, knowledge, and procedures
+- **Settings** — API keys, authentication, and configuration
+
+### 3D Workspace
+
+An interactive office where your Animas exist as visible characters.
+
+<!-- TODO: workspace screenshot / GIF -->
+
+- Characters sit at desks, walk around, and talk to each other in real time
+- Visual states show what each Anima is doing — idle, working, thinking, sleeping
+- Message bubbles appear during conversations
+- Click any character to open a live chat with expression changes
+
+---
+
+## Build Your Team
+
+Your first Anima is the leader. Tell it who you need:
+
+> *"I'd like to hire a researcher who monitors industry trends, and an engineer who manages our infrastructure."*
+
+The leader creates new team members with the right roles, personalities, and reporting structure — all through conversation. No config files. No CLI commands.
+
+### They Work While You're Away
+
+Once your team exists, they run on their own:
+
+- **Heartbeats** — Each Anima periodically reviews tasks, reads channels, and decides what to do next
+- **Cron jobs** — Scheduled tasks per Anima (daily reports, weekly summaries, monitoring)
+- **Night consolidation** — Episodes are distilled into knowledge while agents "sleep"
+- **Team communication** — Shared channels and direct messages keep everyone in sync
+
+### Auto-Generated Avatars
+
+When a new Anima is created, AnimaWorks can automatically generate a character portrait and 3D model from their personality description. If a supervisor already has a portrait, **Vibe Transfer** applies the same art style to new hires — so your whole team looks visually consistent.
+
+Supports NovelAI (anime-style), fal.ai/Flux (stylized/photorealistic), and Meshy (3D models). Works without any image service configured — agents just won't have visual avatars.
+
+---
+
+## Why AnimaWorks?
+
+Most AI agent frameworks treat agents as stateless functions — they execute, forget, and wait for the next call. AnimaWorks takes a fundamentally different approach:
+
+**Agents are people in an organization, not tools in a pipeline.**
+
+| Traditional Agent Frameworks | AnimaWorks |
+|------------------------------|------------|
+| Stateless execution | Persistent identity and memory |
+| Centralized orchestrator | Self-directed autonomous agents |
+| Shared context window | Private memory with selective recall |
+| Tool-use chains | Message-passing organization |
+| Prompt engineering | Personality and values |
+
+Three principles make this work:
+
+- **Encapsulation** — Each Anima's internal thoughts and memories are invisible to others. Communication happens only through text messages — just like real organizations.
+- **Library-style memory** — Instead of cramming everything into a context window, agents search their own memory archives when they need to remember something.
+- **Autonomy** — Agents don't wait for instructions. They run on their own clocks and make decisions based on their own values.
+
+> *Imperfect individuals collaborating through structure outperform any single omniscient actor.*
+
+This insight comes from two parallel careers: a psychiatrist who learned that no mind is complete on its own, and an entrepreneur who learned that the right org chart matters more than any individual hire.
+
+---
+
+## Memory System
+
+Most AI agents have something resembling amnesia — they only remember what fits in their context window. AnimaWorks agents maintain a persistent memory archive and **search it when they need to remember**, the way you'd pull a book off a shelf.
+
+| Memory Type | Neuroscience Analog | What's Stored |
 |---|---|---|
 | `episodes/` | Episodic memory | Daily activity logs |
 | `knowledge/` | Semantic memory | Lessons, rules, learned knowledge |
 | `procedures/` | Procedural memory | Step-by-step workflows |
 | `state/` | Working memory | Current tasks, pending items |
-| `shortterm/` | Short-term memory | Session continuity (context carry-over) |
-| `activity_log/` | Unified activity log | All interactions as JSONL timeline |
+| `shortterm/` | Short-term memory | Session continuity |
+| `activity_log/` | Unified timeline | All interactions as JSONL |
 
-### Memory Lifecycle
+### How Memory Evolves
 
-- **Priming** — 4-channel parallel memory retrieval automatically injected into system prompts (sender profile, recent activity, related knowledge, skill matching)
-- **Consolidation** — Daily (episodic → semantic, NREM-sleep analog) and weekly (knowledge merge + episode compression)
-- **Forgetting** — 3-stage active forgetting based on the synaptic homeostasis hypothesis:
-  1. Synaptic downscaling (daily): mark low-access chunks
-  2. Neurogenesis reorganization (weekly): merge similar low-activity chunks
-  3. Complete forgetting (monthly): archive and remove inactive chunks
+- **Priming** — When a message arrives, 4 parallel searches run automatically: sender profile, recent activity, related knowledge, and skill matching. Results are injected into the system prompt — the agent "remembers" without being told to.
+- **Consolidation** — Every night, daily episodes are distilled into semantic knowledge (like sleep-time learning). Weekly, knowledge entries are merged and compressed.
+- **Forgetting** — Low-value memories gradually fade through 3 stages: marking, merging, and archival. Important procedures and skills are protected.
 
-## Quick Start
+---
 
-### Step 1: Install
+## Multi-Model Support
 
-If you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed, **no API key configuration is needed**. Claude Code handles authentication on its own.
+AnimaWorks supports any LLM. Each Anima can use a different model.
 
-```bash
-git clone https://github.com/xuiltul/animaworks.git
-cd animaworks
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
+| Mode | Engine | Best For | Tools |
+|------|--------|----------|-------|
+| A1 | Claude Agent SDK | Claude models (recommended) | Full: Read/Write/Edit/Bash/Grep/Glob |
+| A1 Fallback | Anthropic SDK | Claude (when Agent SDK unavailable) | search_memory, read/write_file, etc. |
+| A2 | LiteLLM + tool_use | GPT-4o, Gemini, etc. | search_memory, read/write_file, etc. |
+| B | LiteLLM text-based | Ollama, local models | Pseudo tool calls (text-parsed) |
 
-### Step 2: Initialize & Start
+Mode is auto-detected from the model name. Override per-Anima in `config.json` if needed.
 
-```bash
-animaworks init    # Opens setup wizard in your browser
-animaworks start   # Start server
-```
+### API Key Reference
 
-### Step 3: Setup Wizard (in your browser)
+**Claude Code (Mode A1) requires no API keys.**
 
-`animaworks init` opens a setup wizard at http://localhost:18500/setup/ that walks you through:
-
-1. **Language** — Choose your preferred language (17 supported)
-2. **User Info** — Set your username and display name
-3. **AI Provider** — Select your LLM provider and enter API keys (or just select Claude Code — no key needed)
-4. **Leader** — Name your first Anima (your organization's leader)
-5. **Confirm** — Review and finish
-
-### Step 4: Open the Dashboard
-
-Once setup is complete and the server is running, open http://localhost:18500/ — your Anima is ready. Click on it to start chatting.
-
-**That's the entire setup.** Everything from here on happens in the browser.
-
-### Alternative: Direct API Access
-
-If you don't have Claude Code, or want to use other LLM providers (GPT-4o, Gemini, Ollama, etc.):
-
-```bash
-cp .env.example .env
-# Edit .env — at minimum, set ANTHROPIC_API_KEY for Claude models
-```
-
-See [API Key Reference](#api-key-reference) below for details.
-
-## Web UI
-
-After `animaworks start`, everything happens in the browser. No CLI needed.
-
-### Dashboard (`http://localhost:18500/`)
-
-- **Home** — System overview, Anima status cards with avatars, recent activity timeline
-- **Chat** — Full conversation with any Anima (streaming responses, image attachments, conversation history)
-- **Board** — Slack-style shared channels (#general, #ops, etc.) and DM history between Animas
-- **Animas** — Detailed view of each Anima's identity, current state, pending tasks, memory statistics
-- **Activity** — Full activity timeline with filtering
-- **Memory** — Browse any Anima's memory files (episodes, knowledge, procedures)
-- **Logs** — Real-time server and Anima logs
-- **Settings** — Configuration, API key status, authentication management
-
-### Workspace (`http://localhost:18500/workspace/`)
-
-An interactive 3D office where your Animas work as visible characters:
-
-- Characters sit at desks, walk around, and interact with each other in real time
-- Visual states reflect what each Anima is doing (idle, working, thinking, talking, sleeping)
-- Message bubbles appear when Animas communicate with each other
-- Click any character to open a chat overlay with live expression changes
-- Activity timeline shows all events as they happen
-
-## Build Your Team
-
-Your first Anima (the leader) can **hire new team members for you**. Just tell it what kind of people you need:
-
-> "I'd like to hire a researcher who monitors industry trends, and an engineer who manages our infrastructure."
-
-The leader Anima will create new team members with appropriate roles, personalities, and reporting structure — all through conversation. No CLI commands needed.
-
-The leader can also **manage the team**: enable/disable members, restart processes, and assign tasks — all through the chat interface.
-
-### How It Works Autonomously
-
-Once your team is set up, they work on their own:
-
-- **Heartbeats** — Periodic self-checks where each Anima reviews tasks, reads shared channels, and decides what to do next
-- **Cron tasks** — Scheduled jobs defined per Anima
-- **Memory consolidation** — Every night, episodes are distilled into knowledge (like sleep-time learning)
-- **Communication** — Animas coordinate through shared Board channels and direct messages
-
-## Image Generation
-
-AnimaWorks can automatically generate character portraits and 3D models for your Animas. This gives each agent a visual identity in the Dashboard and the 3D Workspace.
-
-### How It Works
-
-1. When a new Anima is created, the **Asset Reconciler** reads the character's identity and generates an image prompt using an LLM
-2. The image is generated via the configured service and saved to `~/.animaworks/animas/{name}/assets/`
-3. If the Anima has a supervisor with an existing portrait, **Vibe Transfer** automatically applies the supervisor's art style — so your whole team looks visually consistent
-4. 3D models can be generated from the 2D portrait for the interactive 3D Workspace
-
-### Setup
-
-Set the API key(s) for your preferred service in `.env`:
-
-```bash
-# Recommended for anime-style character art:
-NOVELAI_API_TOKEN=pst-...
-
-# For Flux-based generation:
-FAL_KEY=...
-
-# For 3D models in the Workspace:
-MESHY_API_KEY=...
-```
-
-Without any image generation keys configured, Animas work perfectly fine — they just won't have visual avatars.
-
-## API Key Reference
-
-**Mode A1 (Claude Code) requires no API keys.** The keys below are only needed for alternative modes and optional features.
-
-### LLM Providers
+#### LLM Providers
 
 | Key | Service | Mode | Get it at |
 |-----|---------|------|-----------|
-| *(none needed)* | Claude Code | A1 | [docs.anthropic.com/en/docs/claude-code](https://docs.anthropic.com/en/docs/claude-code) |
+| *(none needed)* | Claude Code | A1 | [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code) |
 | `ANTHROPIC_API_KEY` | Anthropic API | A1 Fallback / A2 | [console.anthropic.com](https://console.anthropic.com/) |
 | `OPENAI_API_KEY` | OpenAI | A2 | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 | `GOOGLE_API_KEY` | Google AI | A2 | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 
-### Image Generation (Optional)
+#### Image Generation (Optional)
 
-| Key | Service | What it generates | Get it at |
-|-----|---------|-------------------|-----------|
-| `NOVELAI_API_TOKEN` | NovelAI | Anime-style character portraits | [novelai.net](https://novelai.net/) → Settings > Account > API |
-| `FAL_KEY` | fal.ai (Flux) | Stylized / photorealistic images | [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys) |
-| `MESHY_API_KEY` | Meshy | 3D character models (GLB) | [meshy.ai](https://www.meshy.ai/) → Dashboard > API Keys |
+| Key | Service | Output | Get it at |
+|-----|---------|--------|-----------|
+| `NOVELAI_API_TOKEN` | NovelAI | Anime-style portraits | [novelai.net](https://novelai.net/) |
+| `FAL_KEY` | fal.ai (Flux) | Stylized / photorealistic | [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys) |
+| `MESHY_API_KEY` | Meshy | 3D character models | [meshy.ai](https://www.meshy.ai/) |
 
-### External Integrations (Optional)
+#### External Integrations (Optional)
 
 | Key | Service | Get it at |
 |-----|---------|-----------|
-| `SLACK_BOT_TOKEN` | Slack | See [Slack setup guide](docs/slack-socket-mode-setup.md) |
-| `SLACK_APP_TOKEN` | Slack Socket Mode | See [Slack setup guide](docs/slack-socket-mode-setup.md) |
-| `CHATWORK_API_TOKEN` | Chatwork | [chatwork.com](https://www.chatwork.com/) → Settings > API Token |
+| `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` | Slack | [Setup guide](docs/slack-socket-mode-setup.md) |
+| `CHATWORK_API_TOKEN` | Chatwork | [chatwork.com](https://www.chatwork.com/) |
 | `OLLAMA_SERVERS` | Ollama (local LLM) | Default: `http://localhost:11434` |
 
-## Execution Modes
-
-Each Anima can use a different LLM model and execution mode. Set via `config.json` per Anima.
-
-| Mode | Engine | Target Models | Tools |
-|------|--------|--------------|-------|
-| A1 | Claude Agent SDK | Claude models | Read/Write/Edit/Bash/Grep/Glob |
-| A1 Fallback | Anthropic SDK | Claude (when Agent SDK unavailable) | search_memory, read/write_file, etc. |
-| A2 | LiteLLM + tool_use | GPT-4o, Gemini, etc. | search_memory, read/write_file, execute_command, etc. |
-| B | LiteLLM text-based tool loop | Ollama, etc. | Pseudo tool calls (text-parsed JSON) |
-
-Mode is determined automatically from the model name. You can also override it in `config.json` under `model_modes`.
+---
 
 ## Hierarchy & Roles
 
-- Hierarchy is defined by a single `supervisor` field. No supervisor = top-level.
-- Role templates apply specialized prompts, permissions, and defaults:
+Hierarchy is defined by a single `supervisor` field. No supervisor = top-level.
+
+Role templates provide specialized prompts, permissions, and model defaults:
 
 | Role | Default Model | Description |
 |------|--------------|-------------|
@@ -234,57 +192,62 @@ Mode is determined automatically from the model name. You can also override it i
 | `ops` | Local model | Log monitoring, routine tasks |
 | `general` | Sonnet | General-purpose |
 
-- All communication (directives, reports, coordination) flows through async messaging via Messenger.
-- Each Anima runs as an isolated subprocess managed by ProcessSupervisor, communicating via Unix Domain Sockets.
+All communication flows through async messaging. Each Anima runs as an isolated subprocess managed by ProcessSupervisor, communicating via Unix Domain Sockets.
 
-## CLI Reference (Advanced)
+---
 
-The CLI is available for power users and automation. After initial setup, day-to-day use is through the Web UI.
+<details>
+<summary><strong>CLI Reference (Advanced)</strong></summary>
 
-### Server Management
+The CLI is for power users and automation. Day-to-day use is through the Web UI.
+
+### Server
 
 | Command | Description |
 |---|---|
 | `animaworks start [--host HOST] [--port PORT]` | Start server (default: `0.0.0.0:18500`) |
-| `animaworks stop` | Stop server (graceful shutdown) |
+| `animaworks stop` | Stop server |
 | `animaworks restart [--host HOST] [--port PORT]` | Restart server |
 
-### Initialization
+### Setup
 
 | Command | Description |
 |---|---|
-| `animaworks init` | Initialize runtime directory (interactive setup) |
-| `animaworks init --force` | Merge template updates (preserves existing data) |
+| `animaworks init` | Interactive setup wizard |
+| `animaworks init --force` | Merge template updates (preserves data) |
 | `animaworks reset [--restart]` | Reset runtime directory |
 
 ### Anima Management
 
 | Command | Description |
 |---|---|
-| `animaworks create-anima [--from-md PATH] [--role ROLE] [--name NAME]` | Create new Anima from character sheet |
-| `animaworks anima status [ANIMA]` | Show Anima process status |
-| `animaworks anima restart ANIMA` | Restart Anima process |
+| `animaworks create-anima [--from-md PATH] [--role ROLE] [--name NAME]` | Create from character sheet |
+| `animaworks anima status [ANIMA]` | Show process status |
+| `animaworks anima restart ANIMA` | Restart process |
 | `animaworks list` | List all Animas |
 
 ### Communication
 
 | Command | Description |
 |---|---|
-| `animaworks chat ANIMA "message" [--from NAME]` | Send message to Anima |
-| `animaworks send FROM TO "message"` | Send message between Animas |
-| `animaworks heartbeat ANIMA` | Manually trigger heartbeat |
+| `animaworks chat ANIMA "message" [--from NAME]` | Send message |
+| `animaworks send FROM TO "message"` | Inter-Anima message |
+| `animaworks heartbeat ANIMA` | Trigger heartbeat |
 
-### Configuration & Diagnostics
+### Configuration
 
 | Command | Description |
 |---|---|
-| `animaworks config list [--section SECTION]` | Show configuration |
-| `animaworks config get KEY` | Get config value (dot notation: `system.mode`) |
-| `animaworks config set KEY VALUE` | Set config value |
-| `animaworks status` | Show system status |
+| `animaworks config list [--section SECTION]` | Show config |
+| `animaworks config get KEY` | Get value (dot notation) |
+| `animaworks config set KEY VALUE` | Set value |
+| `animaworks status` | System status |
 | `animaworks logs [ANIMA] [--lines N]` | View logs |
 
-## Tech Stack
+</details>
+
+<details>
+<summary><strong>Tech Stack</strong></summary>
 
 | Component | Technology |
 |---|---|
@@ -299,7 +262,10 @@ The CLI is available for power users and automation. After initial setup, day-to
 | External messaging | Slack Socket Mode, Chatwork Webhook |
 | Image generation | NovelAI, fal.ai (Flux), Meshy (3D) |
 
-## Project Structure
+</details>
+
+<details>
+<summary><strong>Project Structure</strong></summary>
 
 ```
 animaworks/
@@ -328,20 +294,18 @@ animaworks/
     └── anima_templates/ #   Anima skeletons
 ```
 
-## About the Author
+</details>
 
-AnimaWorks is built by a psychiatrist and serial entrepreneur who has been programming since childhood and running real organizations for over a decade.
-
-The core insight — that imperfect individuals collaborating through structure outperform any single omniscient actor — comes from two parallel careers: treating patients who taught him that no mind is complete on its own, and building companies where the right org chart matters more than any individual hire.
+---
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Design Philosophy](docs/vision.md) | Core design principles and vision |
-| [Memory System](docs/memory.md) | Detailed memory architecture specification |
-| [Brain Mapping](docs/brain-mapping.md) | Architecture mapped to neuroscience concepts |
-| [Feature Index](docs/features.md) | Comprehensive list of implemented features |
+| [Design Philosophy](docs/vision.md) | Core principles and vision |
+| [Memory System](docs/memory.md) | Memory architecture specification |
+| [Brain Mapping](docs/brain-mapping.md) | Architecture mapped to neuroscience |
+| [Feature Index](docs/features.md) | Comprehensive feature list |
 | [Technical Spec](docs/spec.md) | Technical specification |
 
 ## License
