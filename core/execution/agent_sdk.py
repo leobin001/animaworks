@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
@@ -34,8 +35,6 @@ logger = logging.getLogger("animaworks.execution.agent_sdk")
 # Re-export for backward compatibility (agent.py imports from here)
 __all__ = ["AgentSDKExecutor", "StreamDisconnectedError"]
 
-
-_BASH_SEND_RE = re.compile(r"^\s*(?:bash\s+)?send\s+(\S+)\s+")
 
 # ── A1 Bash blocklist ────────────────────────────────────────
 
@@ -307,9 +306,8 @@ def _log_tool_use(
 
 def _build_pre_tool_hook(
     anima_dir: Path,
-    pending_sends: list[dict],
 ) -> Callable:
-    """Build a PreToolUse hook with security checks, output guards, send tracking, and tool logging."""
+    """Build a PreToolUse hook with security checks, output guards, and tool logging."""
     from claude_agent_sdk.types import (
         HookContext,
         HookInput,
@@ -371,17 +369,6 @@ def _build_pre_tool_hook(
                     )
                 )
 
-            # Send intent tracking — intentionally matched against the
-            # original command *before* output-guard rewriting, so that
-            # "send <recipient> <msg>" is detected regardless of any
-            # output-guard prefix injected later in this hook.
-            m = _BASH_SEND_RE.match(command)
-            if m:
-                pending_sends.append({
-                    "to": m.group(1),
-                    "command": command,
-                })
-
         # Log the tool call (allowed)
         _log_tool_use(anima_dir, tool_name, tool_input)
 
@@ -439,11 +426,9 @@ class AgentSDKExecutor(BaseExecutor):
         instead of consuming API credits.
 
         Sets ``ANIMAWORKS_ANIMA_DIR`` so that ``animaworks-tool`` can
-        discover personal tools in the anima's ``tools/`` directory,
-        and prepends ``anima_dir`` to ``PATH`` so the ``send`` script is
-        discoverable via ``bash send``.
-        ``ANIMAWORKS_PROJECT_DIR`` is propagated so the send script can
-        locate ``main.py``.
+        discover personal tools in the anima's ``tools/`` directory.
+        ``ANIMAWORKS_PROJECT_DIR`` is propagated so tools can locate
+        ``main.py``.
         """
         from core.paths import PROJECT_DIR
 
@@ -460,35 +445,20 @@ class AgentSDKExecutor(BaseExecutor):
             env["ANTHROPIC_BASE_URL"] = self._model_config.api_base_url
         return env
 
-    def _check_unconfirmed_sends(
-        self,
-        pending_sends: list[dict],
-        confirmed: set[str],
-    ) -> list[dict]:
-        """Compare send intents with confirmed sends, log unconfirmed."""
-        if not pending_sends:
-            return []
-        unconfirmed = [
-            s for s in pending_sends
-            if s["to"] not in confirmed
-        ]
-        if unconfirmed:
-            names = ", ".join(s["to"] for s in unconfirmed)
-            logger.warning(
-                "Unconfirmed sends detected: %s (attempted %d, confirmed %d)",
-                names, len(pending_sends), len(confirmed),
-            )
-            try:
-                from core.memory.activity import ActivityLogger
-                activity = ActivityLogger(self._anima_dir)
-                activity.log(
-                    "error",
-                    content=f"Unconfirmed message sends to: {names}",
-                    meta={"unconfirmed_sends": unconfirmed},
-                )
-            except Exception as e:
-                logger.warning("Failed to log unconfirmed sends: %s", e)
-        return unconfirmed
+    def _build_mcp_env(self) -> dict[str, str]:
+        """Build env dict for the MCP server subprocess.
+
+        The MCP server needs ANIMAWORKS_ANIMA_DIR and ANIMAWORKS_PROJECT_DIR
+        to initialize ToolHandler, plus PYTHONPATH so it can import core modules.
+        """
+        from core.paths import PROJECT_DIR
+
+        return {
+            "ANIMAWORKS_ANIMA_DIR": str(self._anima_dir),
+            "ANIMAWORKS_PROJECT_DIR": str(PROJECT_DIR),
+            "PYTHONPATH": str(PROJECT_DIR),
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        }
 
     # ── Blocking execution ───────────────────────────────────
 
@@ -516,6 +486,7 @@ class AgentSDKExecutor(BaseExecutor):
             ClaudeAgentOptions,
             HookMatcher,
             ResultMessage,
+            SystemMessage,
             TextBlock,
             query,
         )
@@ -529,7 +500,6 @@ class AgentSDKExecutor(BaseExecutor):
         threshold = self._model_config.context_threshold
         _hook_fired = False
         _transcript_path = ""
-        pending_sends: list[dict] = []
 
         async def _post_tool_hook(
             input_data: HookInput,
@@ -563,17 +533,25 @@ class AgentSDKExecutor(BaseExecutor):
 
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
-            allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
+            allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob",
+                           "mcp__aw__*"],
             permission_mode="acceptEdits",
             cwd=str(self._anima_dir),
             max_turns=self._model_config.max_turns,
             model=self._resolve_agent_sdk_model(),
             env=self._build_env(),
             max_buffer_size=_SDK_MAX_BUFFER_SIZE,
+            mcp_servers={
+                "aw": {
+                    "command": sys.executable,
+                    "args": ["-m", "core.mcp.server"],
+                    "env": self._build_mcp_env(),
+                },
+            },
             hooks={
                 "PreToolUse": [HookMatcher(
                     matcher="Write|Edit|Bash|Read|Grep|Glob",
-                    hooks=[_build_pre_tool_hook(self._anima_dir, pending_sends)],
+                    hooks=[_build_pre_tool_hook(self._anima_dir)],
                 )],
                 "PostToolUse": [HookMatcher(matcher=None, hooks=[_post_tool_hook])],
             },
@@ -594,6 +572,19 @@ class AgentSDKExecutor(BaseExecutor):
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             response_text.append(block.text)
+                elif isinstance(message, SystemMessage):
+                    if message.subtype == "init" and message.data:
+                        mcp_servers = message.data.get("mcp_servers", [])
+                        for srv in mcp_servers:
+                            name = srv.get("name", "unknown")
+                            status = srv.get("status", "unknown")
+                            if status != "connected":
+                                logger.error(
+                                    "MCP server '%s' failed to connect: status=%s",
+                                    name, status,
+                                )
+                            else:
+                                logger.info("MCP server '%s' connected successfully", name)
         except Exception as e:
             logger.exception("Agent SDK execution error")
             return ExecutionResult(
@@ -607,12 +598,10 @@ class AgentSDKExecutor(BaseExecutor):
             message_count, len(response_text),
         )
         replied_to = self._read_replied_to_file()
-        unconfirmed = self._check_unconfirmed_sends(pending_sends, replied_to)
         return ExecutionResult(
             text="\n".join(response_text) or "(no response)",
             result_message=result_message,
             replied_to_from_transcript=replied_to,
-            unconfirmed_sends=unconfirmed,
         )
 
     # ── Streaming execution ──────────────────────────────────
@@ -642,6 +631,7 @@ class AgentSDKExecutor(BaseExecutor):
             ClaudeAgentOptions,
             HookMatcher,
             ResultMessage,
+            SystemMessage,
             TextBlock,
             ToolUseBlock,
             query,
@@ -657,7 +647,6 @@ class AgentSDKExecutor(BaseExecutor):
         threshold = self._model_config.context_threshold
         _hook_fired = False
         _transcript_path = ""
-        pending_sends: list[dict] = []
 
         async def _post_tool_hook(
             input_data: HookInput,
@@ -689,7 +678,8 @@ class AgentSDKExecutor(BaseExecutor):
 
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
-            allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
+            allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob",
+                           "mcp__aw__*"],
             permission_mode="acceptEdits",
             cwd=str(self._anima_dir),
             max_turns=self._model_config.max_turns,
@@ -697,10 +687,17 @@ class AgentSDKExecutor(BaseExecutor):
             env=self._build_env(),
             max_buffer_size=_SDK_MAX_BUFFER_SIZE,
             include_partial_messages=True,
+            mcp_servers={
+                "aw": {
+                    "command": sys.executable,
+                    "args": ["-m", "core.mcp.server"],
+                    "env": self._build_mcp_env(),
+                },
+            },
             hooks={
                 "PreToolUse": [HookMatcher(
                     matcher="Write|Edit|Bash|Read|Grep|Glob",
-                    hooks=[_build_pre_tool_hook(self._anima_dir, pending_sends)],
+                    hooks=[_build_pre_tool_hook(self._anima_dir)],
                 )],
                 "PostToolUse": [HookMatcher(matcher=None, hooks=[_post_tool_hook])],
             },
@@ -752,6 +749,20 @@ class AgentSDKExecutor(BaseExecutor):
                 elif isinstance(message, ResultMessage):
                     result_message = message
                     tracker.update_from_result_message(message.usage)
+
+                elif isinstance(message, SystemMessage):
+                    if message.subtype == "init" and message.data:
+                        mcp_servers = message.data.get("mcp_servers", [])
+                        for srv in mcp_servers:
+                            name = srv.get("name", "unknown")
+                            status = srv.get("status", "unknown")
+                            if status != "connected":
+                                logger.error(
+                                    "MCP server '%s' failed to connect: status=%s",
+                                    name, status,
+                                )
+                            else:
+                                logger.info("MCP server '%s' connected successfully", name)
         except Exception as e:
             logger.exception("Agent SDK streaming error")
             partial = "\n".join(response_text)
@@ -768,11 +779,9 @@ class AgentSDKExecutor(BaseExecutor):
         )
         full_text = "\n".join(response_text) or "(no response)"
         replied_to = self._read_replied_to_file()
-        unconfirmed = self._check_unconfirmed_sends(pending_sends, replied_to)
         yield {
             "type": "done",
             "full_text": full_text,
             "result_message": result_message,
             "replied_to_from_transcript": replied_to,
-            "unconfirmed_sends": unconfirmed,
         }
