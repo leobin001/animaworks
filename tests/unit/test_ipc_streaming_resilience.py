@@ -2,6 +2,7 @@
 
 Covers:
 - A1: AgentSDK execute_streaming SystemExit -> StreamDisconnectedError conversion
+- A1/A2/A3: CancelledError must be re-raised (not caught)
 - A2: streaming_handler _stream_producer BaseException -> FATAL_STREAM_ERROR
 - B1: manager._handle_process_failure sets ProcessState.RESTARTING
 - B2: process_handle send_request / send_request_stream RESTARTING guard
@@ -63,6 +64,50 @@ class TestStreamingHandlerBaseException:
         assert len(error_responses) == 1
         assert error_responses[0].error["code"] == "FATAL_STREAM_ERROR"
         assert "SystemExit" in error_responses[0].error["message"]
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_does_not_produce_fatal_stream_error(self):
+        """CancelledError must NOT be caught as FATAL_STREAM_ERROR.
+
+        CancelledError is a normal asyncio lifecycle event (e.g. SIGTERM).
+        The producer task re-raises it (contained within the task), and the
+        stream ends gracefully via SENTINEL without a FATAL_STREAM_ERROR.
+        """
+        from core.supervisor.streaming_handler import StreamingIPCHandler
+
+        handler = StreamingIPCHandler(
+            anima=MagicMock(),
+            anima_name="test-anima",
+            anima_dir="/tmp/test",
+        )
+
+        async def mock_stream(*args, **kwargs):
+            raise asyncio.CancelledError()
+            yield  # noqa: unreachable
+
+        handler._anima.process_message_stream = mock_stream
+        handler._anima.needs_bootstrap = False
+
+        request = IPCRequest(
+            id="req-cancel",
+            method="process_message",
+            params={"message": "test", "stream": True},
+        )
+
+        responses = []
+        with patch("core.config.load_config") as mock_config:
+            mock_config.return_value.server.keepalive_interval = 30
+            async for resp in handler.handle_stream(request):
+                responses.append(resp)
+
+        # CancelledError must NOT produce FATAL_STREAM_ERROR
+        fatal_errors = [
+            r for r in responses
+            if r.error and r.error.get("code") == "FATAL_STREAM_ERROR"
+        ]
+        assert len(fatal_errors) == 0, (
+            f"CancelledError should not produce FATAL_STREAM_ERROR, got: {fatal_errors}"
+        )
 
     @pytest.mark.asyncio
     async def test_keyboard_interrupt_in_stream_yields_fatal_error(self):

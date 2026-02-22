@@ -176,6 +176,10 @@ class AnimaRunner:
             sys.exit(1)
 
         except BaseException as e:
+            # CancelledError は SIGTERM 時の正常な asyncio シャットダウン。
+            # 捕捉せず伝播させて asyncio.run() の正常終了フローに委ねる。
+            if isinstance(e, asyncio.CancelledError):
+                raise
             # 全内部ハンドラをすり抜けた BaseException の最終安全弁。
             logger.critical(
                 "FATAL BaseException in AnimaRunner (%s): %s: %s",

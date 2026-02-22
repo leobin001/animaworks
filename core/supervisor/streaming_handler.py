@@ -216,6 +216,9 @@ class StreamingIPCHandler:
                     },
                 ))
             except BaseException as e:
+                # CancelledError は正常な asyncio ライフサイクル。
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 # A1 で捕捉されなかった BaseException の安全弁。
                 # エラーレスポンスをキューに入れ、親プロセスに正常通知。
                 logger.critical(

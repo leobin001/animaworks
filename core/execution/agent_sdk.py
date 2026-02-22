@@ -15,6 +15,7 @@ execution.  Tool results are captured from UserMessage ToolResultBlock
 instead of PostToolUse hooks.
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -870,6 +871,10 @@ class AgentSDKExecutor(BaseExecutor):
                                     logger.info("MCP server '%s' connected successfully", name)
             logger.debug("ClaudeSDKClient disconnected")
         except BaseException as e:
+            # CancelledError は正常な asyncio ライフサイクル（SIGTERM等）。
+            # 捕捉せずそのまま伝播させる。
+            if isinstance(e, asyncio.CancelledError):
+                raise
             # BaseException を捕捉して StreamDisconnectedError に変換。
             # Agent SDK hook callback の "Stream closed" が SystemExit を
             # 発生させ、except Exception をすり抜ける問題への対策。
