@@ -307,6 +307,21 @@ class ConsolidationEngine:
         # Update RAG index for affected files
         self._update_rag_index(files_created + files_updated)
 
+        # Knowledge validity review (self-review of existing memories)
+        validity_review_result: dict[str, Any] = {}
+        try:
+            validity_review_result = await self._run_validity_review(
+                episode_entries=episode_entries,
+                resolved_events=resolved_events,
+                files_created=files_created,
+                files_updated=files_updated,
+                model=model,
+            )
+        except Exception:
+            logger.exception(
+                "Knowledge validity review failed for anima=%s", self.anima_name,
+            )
+
         # Synaptic downscaling (forgetting phase 1)
         downscaling_result: dict[str, Any] = {}
         try:
@@ -364,6 +379,7 @@ class ConsolidationEngine:
             "knowledge_files_created": files_created,
             "knowledge_files_updated": files_updated,
             "distillation": distillation_result,
+            "validity_review": validity_review_result,
             "downscaling": downscaling_result,
             "reconsolidation": reconsolidation_result,
             "knowledge_reconsolidation": knowledge_reconsolidation_result,
@@ -1564,6 +1580,425 @@ class ConsolidationEngine:
         except Exception:
             logger.exception("Monthly forgetting failed for anima=%s", self.anima_name)
             return {"forgotten_chunks": 0, "archived_files": [], "error": True}
+
+    # ── Knowledge Validity Review ─────────────────────────────────
+
+    def _select_review_candidates(
+        self,
+        episodes_text: str,
+        resolved_events: list[dict],
+        exclude_files: list[str],
+        max_candidates: int = 10,
+        *,
+        mm: Any | None = None,
+    ) -> list[Path]:
+        """Select existing knowledge/procedure files for validity review.
+
+        Collects candidates from three sources:
+        A) RAG search using episodes text (knowledge + procedures)
+        B) RAG search using resolved events text
+        C) Low-confidence files with recent activity (frontmatter scan)
+
+        Excludes files created/updated in this cycle, files with valid_until
+        set, and files marked as important.
+
+        Args:
+            episodes_text: Concatenated episode text for RAG query
+            resolved_events: List of resolved event dicts
+            exclude_files: Filenames to exclude (created/updated this cycle)
+            max_candidates: Maximum number of candidates to return
+            mm: Optional MemoryManager instance (created internally if None)
+
+        Returns:
+            List of absolute Paths to candidate files
+        """
+        if mm is None:
+            from core.memory.manager import MemoryManager
+            mm = MemoryManager(self.anima_dir)
+        candidates: dict[str, Path] = {}  # name -> Path, for dedup
+        exclude_set = {f.replace("knowledge/", "").replace("procedures/", "") for f in exclude_files}
+
+        procedures_dir = self.anima_dir / "procedures"
+
+        def _should_exclude(path: Path) -> bool:
+            """Check if a file should be excluded from review."""
+            if path.name in exclude_set:
+                return True
+            try:
+                meta = mm.read_knowledge_metadata(path)
+            except Exception:
+                logger.debug(
+                    "Skipping file with unreadable metadata: %s", path.name,
+                )
+                return True
+            if meta.get("valid_until"):
+                return True
+            if meta.get("importance") == "important":
+                return True
+            return False
+
+        # Helper: collect RAG results into candidates dict
+        def _collect_rag_candidates(
+            retriever: Any, query: str,
+        ) -> None:
+            for mem_type in ("knowledge", "procedures"):
+                results = retriever.search(
+                    query=query,
+                    anima_name=self.anima_name,
+                    memory_type=mem_type,
+                    top_k=5,
+                )
+                for r in results:
+                    source = r.metadata.get("source_file", "")
+                    if not source:
+                        continue
+                    if mem_type == "knowledge":
+                        path = self.knowledge_dir / Path(source).name
+                    else:
+                        path = procedures_dir / Path(source).name
+                    if path.exists() and not _should_exclude(path):
+                        candidates[path.name] = path
+
+        # Source A: RAG search with episodes text
+        if episodes_text.strip():
+            try:
+                from core.memory.rag.retriever import MemoryRetriever
+                from core.memory.rag.singleton import get_vector_store
+                from core.memory.rag import MemoryIndexer
+
+                vector_store = self._rag_store or get_vector_store()
+                indexer = MemoryIndexer(vector_store, self.anima_name, self.anima_dir)
+                retriever = MemoryRetriever(
+                    vector_store, indexer, self.knowledge_dir,
+                )
+
+                _collect_rag_candidates(retriever, episodes_text[:500])
+
+                # Source B: RAG search with resolved events text
+                if resolved_events:
+                    resolved_text = " ".join(
+                        r.get("content", "") for r in resolved_events
+                    )[:500]
+                    if resolved_text.strip():
+                        _collect_rag_candidates(retriever, resolved_text)
+
+            except ImportError:
+                logger.debug("RAG not available for validity review candidate selection")
+            except Exception:
+                logger.warning(
+                    "RAG search failed for validity review candidates",
+                    exc_info=True,
+                )
+
+        # Source C: Low-confidence files with recent activity
+        cutoff = now_jst() - timedelta(days=7)
+        for search_dir in (self.knowledge_dir, procedures_dir):
+            if not search_dir.exists():
+                continue
+            for path in search_dir.rglob("*.md"):
+                if path.name in candidates or path.name in exclude_set:
+                    continue
+                try:
+                    meta = mm.read_knowledge_metadata(path)
+                except Exception:
+                    continue
+                if meta.get("valid_until") or meta.get("importance") == "important":
+                    continue
+                confidence = meta.get("confidence", 1.0)
+                last_used = meta.get("last_used", "")
+                if confidence < 0.5 and last_used:
+                    try:
+                        last_used_dt = ensure_aware(
+                            datetime.fromisoformat(last_used),
+                        )
+                        if last_used_dt >= cutoff:
+                            candidates[path.name] = path
+                    except (ValueError, TypeError):
+                        pass
+
+        # Apply hard cap
+        result = list(candidates.values())[:max_candidates]
+        logger.info(
+            "Validity review candidates for anima=%s: %d files",
+            self.anima_name, len(result),
+        )
+        return result
+
+    async def _run_validity_review(
+        self,
+        episode_entries: list[dict[str, str]],
+        resolved_events: list[dict],
+        files_created: list[str],
+        files_updated: list[str],
+        model: str,
+    ) -> dict[str, Any]:
+        """Run self-review of existing knowledge for staleness.
+
+        Selects candidate files via RAG and frontmatter scan, then uses
+        a single LLM call to assess validity. Stale files are archived,
+        needs_update files are amended, valid files get metadata updated.
+
+        Args:
+            episode_entries: Today's episode entries
+            resolved_events: Today's resolved events
+            files_created: Files created in this consolidation cycle
+            files_updated: Files updated in this consolidation cycle
+            model: LLM model identifier
+
+        Returns:
+            Dict with review results (reviewed, stale, updated, valid, errors)
+        """
+        result: dict[str, Any] = {
+            "reviewed": 0,
+            "stale": 0,
+            "needs_update": 0,
+            "valid": 0,
+            "errors": 0,
+        }
+
+        if not episode_entries:
+            return result
+
+        from core.memory.manager import MemoryManager
+
+        mm = MemoryManager(self.anima_dir)
+
+        # Build episodes text
+        episodes_text = "\n\n".join([
+            f"## {e['date']} {e['time']}\n{e['content']}"
+            for e in episode_entries
+        ])
+
+        # Select candidates
+        exclude_files = files_created + files_updated
+        candidates = self._select_review_candidates(
+            episodes_text, resolved_events, exclude_files, mm=mm,
+        )
+
+        if not candidates:
+            logger.info(
+                "No validity review candidates for anima=%s",
+                self.anima_name,
+            )
+            return result
+        review_parts: list[str] = []
+        for path in candidates:
+            try:
+                content = mm.read_knowledge_content(path)
+                # Truncate long files
+                snippet = content[:1500] if len(content) > 1500 else content
+                review_parts.append(f"### {path.name}\n{snippet}")
+            except Exception:
+                logger.debug("Failed to read candidate: %s", path.name)
+                continue
+
+        if not review_parts:
+            return result
+
+        # Build episodes summary (truncated for prompt budget)
+        episodes_summary = episodes_text[:3000]
+
+        # Build LLM prompt
+        prompt = load_prompt(
+            "memory/knowledge_validity_review",
+            anima_name=self.anima_name,
+            episodes_summary=episodes_summary,
+            review_files="\n\n".join(review_parts),
+        )
+
+        # Call LLM
+        try:
+            import litellm
+
+            response = await litellm.acompletion(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2048,
+            )
+
+            raw = response.choices[0].message.content or ""
+
+            # Extract JSON array from response (find first [ to last ])
+            bracket_start = raw.find("[")
+            bracket_end = raw.rfind("]")
+            if bracket_start < 0 or bracket_end <= bracket_start:
+                logger.warning(
+                    "Validity review: no JSON array found in LLM response "
+                    "for anima=%s",
+                    self.anima_name,
+                )
+                return result
+
+            verdicts = json.loads(raw[bracket_start:bracket_end + 1])
+
+        except json.JSONDecodeError:
+            logger.warning(
+                "Validity review: JSON parse failed for anima=%s",
+                self.anima_name,
+                exc_info=True,
+            )
+            return result
+        except Exception:
+            logger.warning(
+                "Validity review LLM call failed for anima=%s",
+                self.anima_name,
+                exc_info=True,
+            )
+            return result
+
+        # Process verdicts
+        result = await self._process_review_verdicts(
+            verdicts, candidates, mm=mm,
+        )
+
+        logger.info(
+            "Validity review for anima=%s: reviewed=%d stale=%d "
+            "needs_update=%d valid=%d errors=%d",
+            self.anima_name,
+            result["reviewed"], result["stale"],
+            result["needs_update"], result["valid"],
+            result["errors"],
+        )
+
+        return result
+
+    async def _process_review_verdicts(
+        self,
+        verdicts: list[dict],
+        candidates: list[Path],
+        *,
+        mm: Any | None = None,
+    ) -> dict[str, Any]:
+        """Process LLM verdicts for reviewed knowledge files.
+
+        Args:
+            verdicts: List of verdict dicts from LLM (file, verdict, reason, correction)
+            candidates: Original candidate paths (for path resolution)
+            mm: Optional MemoryManager instance (created internally if None)
+
+        Returns:
+            Dict with counts: reviewed, stale, needs_update, valid, errors
+        """
+        if mm is None:
+            from core.memory.manager import MemoryManager
+            mm = MemoryManager(self.anima_dir)
+        now = now_iso()
+
+        # Build name -> Path mapping from candidates
+        path_map: dict[str, Path] = {p.name: p for p in candidates}
+
+        counts = {
+            "reviewed": 0,
+            "stale": 0,
+            "needs_update": 0,
+            "valid": 0,
+            "errors": 0,
+        }
+
+        for v in verdicts:
+            filename = v.get("file", "")
+            verdict = v.get("verdict", "")
+            reason = v.get("reason", "")
+            correction = v.get("correction")
+
+            # Resolve path
+            path = path_map.get(filename)
+            if not path or not path.exists():
+                logger.debug("Verdict for unknown file: %s", filename)
+                counts["errors"] += 1
+                continue
+
+            counts["reviewed"] += 1
+
+            try:
+                if verdict == "valid":
+                    # Update last_reviewed metadata
+                    meta = mm.read_knowledge_metadata(path)
+                    meta["last_reviewed"] = now
+                    content = mm.read_knowledge_content(path)
+                    mm.write_knowledge_with_meta(path, content, meta)
+                    counts["valid"] += 1
+
+                elif verdict == "stale":
+                    # Archive to superseded, optionally create replacement
+                    meta = mm.read_knowledge_metadata(path)
+                    meta["valid_until"] = now
+                    meta["staleness_reason"] = reason
+                    content = mm.read_knowledge_content(path)
+                    mm.write_knowledge_with_meta(path, content, meta)
+
+                    # Move to archive
+                    archive_dir = self.anima_dir / "archive" / "superseded"
+                    archive_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(path), str(archive_dir / path.name))
+
+                    # Create replacement if correction provided
+                    if correction:
+                        new_meta = {
+                            "created_at": now,
+                            "confidence": 0.7,
+                            "auto_consolidated": True,
+                            "validity_reviewed": True,
+                            "supersedes": [path.name],
+                            "success_count": 0,
+                            "failure_count": 0,
+                            "version": 1,
+                            "last_used": "",
+                        }
+                        # Determine target dir based on original location
+                        if "procedures" in str(path.parent):
+                            target_dir = self.anima_dir / "procedures"
+                        else:
+                            target_dir = self.knowledge_dir
+                        new_path = target_dir / path.name
+                        mm.write_knowledge_with_meta(
+                            new_path, correction, new_meta,
+                        )
+                        self._update_rag_index([new_path.name])
+
+                    counts["stale"] += 1
+                    logger.info(
+                        "Validity review: archived stale file %s: %s",
+                        path.name, reason,
+                    )
+
+                elif verdict == "needs_update":
+                    if not correction:
+                        counts["errors"] += 1
+                        continue
+                    # Append correction with marker
+                    meta = mm.read_knowledge_metadata(path)
+                    existing_content = mm.read_knowledge_content(path)
+
+                    timestamp = now_jst().strftime("%Y-%m-%d %H:%M")
+                    updated_content = (
+                        f"{existing_content}\n\n"
+                        f"[VALIDITY-REVIEWED: {timestamp}]\n\n{correction}"
+                    )
+
+                    meta["updated_at"] = now
+                    meta["last_reviewed"] = now
+                    mm.write_knowledge_with_meta(path, updated_content, meta)
+                    self._update_rag_index([path.name])
+                    counts["needs_update"] += 1
+                    logger.info(
+                        "Validity review: updated file %s: %s",
+                        path.name, reason,
+                    )
+
+                else:
+                    logger.debug("Unknown verdict '%s' for %s", verdict, filename)
+                    counts["errors"] += 1
+
+            except Exception:
+                logger.warning(
+                    "Failed to process verdict for %s",
+                    filename,
+                    exc_info=True,
+                )
+                counts["errors"] += 1
+
+        return counts
 
     # ── Contradiction Detection Integration ────────────────────────
 
