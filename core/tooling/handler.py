@@ -293,6 +293,21 @@ class ToolHandler:
             personal_tools=personal_tools,
         )
 
+        # ── Cache subordinate activity_log paths for permission checks ──
+        self._subordinate_activity_dirs: list[Path] = []
+        try:
+            from core.config.models import load_config
+            from core.paths import get_animas_dir
+            _cfg = load_config()
+            _animas_dir = get_animas_dir()
+            for _sub_name, _sub_cfg in _cfg.animas.items():
+                if _sub_cfg.supervisor == self._anima_name:
+                    self._subordinate_activity_dirs.append(
+                        (_animas_dir / _sub_name / "activity_log").resolve()
+                    )
+        except Exception:
+            logger.debug("Failed to cache subordinate paths for %s", self._anima_name, exc_info=True)
+
         # ── Dispatch table: tool name → handler method ──
         self._dispatch: dict[str, Callable[[dict[str, Any]], str]] = {
             "search_memory": self._handle_search_memory,
@@ -1678,8 +1693,9 @@ class ToolHandler:
 
         Access rules (evaluated in order):
           1. Own anima_dir -- always allowed for reads; writes to protected files blocked
-          2. Paths listed under ``ファイル操作`` section in permissions.md
-          3. Everything else -- denied
+          2. Subordinate's activity_log/ -- read-only for direct supervisors
+          3. Paths listed under ``ファイル操作`` section in permissions.md
+          4. Everything else -- denied
         """
         resolved = Path(path).resolve()
 
@@ -1694,17 +1710,9 @@ class ToolHandler:
 
         # Supervisor can read direct subordinate's activity_log (work records)
         if not write:
-            try:
-                from core.config.models import load_config
-                from core.paths import get_animas_dir
-                _cfg = load_config()
-                for _sub_name, _sub_cfg in _cfg.animas.items():
-                    if _sub_cfg.supervisor == self._anima_name:
-                        sub_activity = (get_animas_dir() / _sub_name / "activity_log").resolve()
-                        if resolved.is_relative_to(sub_activity):
-                            return None
-            except Exception:
-                logger.debug("supervisor_activity_check failed anima=%s", self._anima_name, exc_info=True)
+            for sub_activity in self._subordinate_activity_dirs:
+                if resolved.is_relative_to(sub_activity):
+                    return None
 
         permissions = self._memory.read_permissions()
         if "ファイル操作" not in permissions:
