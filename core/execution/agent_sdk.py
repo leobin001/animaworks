@@ -604,6 +604,9 @@ class AgentSDKExecutor(BaseExecutor):
                     "env": self._build_mcp_env(),
                 },
             },
+            # NOTE: PostToolUse hook (context threshold monitoring) was removed
+            # because it cannot reliably capture tool results via the SDK.
+            # Context threshold monitoring needs reimplementation — see separate issue.
             hooks={
                 "PreToolUse": [HookMatcher(
                     matcher="Write|Edit|Bash|Read|Grep|Glob",
@@ -638,9 +641,7 @@ class AgentSDKExecutor(BaseExecutor):
                                     self._model_config.model,
                                 )
                     elif isinstance(message, UserMessage):
-                        if hasattr(message, "content") and isinstance(
-                            message.content, list
-                        ):
+                        if isinstance(message.content, list):
                             for block in message.content:
                                 if isinstance(block, ToolResultBlock):
                                     _handle_tool_result_block(
@@ -739,6 +740,9 @@ class AgentSDKExecutor(BaseExecutor):
                     "env": self._build_mcp_env(),
                 },
             },
+            # NOTE: PostToolUse hook (context threshold monitoring) was removed
+            # because it cannot reliably capture tool results via the SDK.
+            # Context threshold monitoring needs reimplementation — see separate issue.
             hooks={
                 "PreToolUse": [HookMatcher(
                     matcher="Write|Edit|Bash|Read|Grep|Glob",
@@ -801,9 +805,7 @@ class AgentSDKExecutor(BaseExecutor):
                                     }
 
                     elif isinstance(message, UserMessage):
-                        if hasattr(message, "content") and isinstance(
-                            message.content, list
-                        ):
+                        if isinstance(message.content, list):
                             for block in message.content:
                                 if isinstance(block, ToolResultBlock):
                                     _handle_tool_result_block(
