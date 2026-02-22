@@ -311,3 +311,125 @@ class TestUnifiedSkillTableE2E:
         # Full content is returned
         assert "cron.mdの構造" in result
         assert "schedule: フィールドにcron式を記載する。" in result
+
+    def test_skill_description_survives_db_override(self, tmp_path: Path):
+        """Skill tool description must not be overwritten by apply_db_descriptions.
+
+        The skill tool is appended AFTER apply_db_descriptions, so even if
+        the DB has an entry for 'skill', it will not affect the dynamic
+        <available_skills> description.
+        """
+        personal_meta = SkillMeta(
+            name="deploy",
+            description="デプロイ手順",
+            path=tmp_path / "skills" / "deploy.md",
+            is_common=False,
+        )
+
+        # Mock the prompt DB to return an overriding description for 'skill'
+        fake_store = MagicMock()
+        fake_store.list_descriptions.return_value = [
+            {"name": "skill", "description": "DB OVERRIDE — should not appear"},
+        ]
+
+        with patch("core.tooling.prompt_db.get_prompt_store", return_value=fake_store):
+            tools = build_tool_list(
+                include_skill_tools=True,
+                skill_metas=[personal_meta],
+                common_skill_metas=[],
+                procedure_metas=[],
+            )
+
+        skill_tool = next(t for t in tools if t["name"] == "skill")
+        # The dynamic description must survive — DB override must NOT apply
+        assert "deploy" in skill_tool["description"]
+        assert "<available_skills>" in skill_tool["description"]
+        assert "DB OVERRIDE" not in skill_tool["description"]
+
+
+class TestHandleSkillIntegration:
+    """Integration tests: invoke skill via ToolHandler._handle_skill."""
+
+    @staticmethod
+    def _make_handler(anima_dir: Path, common_skills_dir: Path) -> "ToolHandler":
+        """Create a ToolHandler with minimal mocking."""
+        from core.tooling.handler import ToolHandler
+
+        memory = MagicMock()
+        memory.anima_dir = anima_dir
+
+        with patch("core.tooling.handler.ActivityLogger"), \
+             patch("core.tooling.handler.ExternalToolDispatcher"):
+            handler = ToolHandler(anima_dir=anima_dir, memory=memory)
+        return handler
+
+    def test_handle_skill_returns_content(self, tmp_path: Path):
+        """ToolHandler._handle_skill loads and returns skill content."""
+        anima_dir = tmp_path / "animas" / "alice"
+        skills_dir = anima_dir / "skills"
+        common_skills_dir = tmp_path / "common_skills"
+        procedures_dir = anima_dir / "procedures"
+        for d in (anima_dir, skills_dir, common_skills_dir, procedures_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+        _make_skill_file(
+            skills_dir / "test-skill.md",
+            name="test-skill",
+            description="A test skill for integration",
+            body="## Steps\n\n1. Do this.\n2. Do that.",
+        )
+
+        handler = self._make_handler(anima_dir, common_skills_dir)
+        with patch("core.paths.get_common_skills_dir", return_value=common_skills_dir):
+            result = handler._handle_skill({"skill_name": "test-skill"})
+
+        assert "Steps" in result
+        assert "Do this." in result
+        assert "Do that." in result
+
+    def test_handle_skill_nonexistent_returns_error(self, tmp_path: Path):
+        """ToolHandler._handle_skill for missing skill returns error."""
+        anima_dir = tmp_path / "animas" / "alice"
+        skills_dir = anima_dir / "skills"
+        common_skills_dir = tmp_path / "common_skills"
+        procedures_dir = anima_dir / "procedures"
+        for d in (anima_dir, skills_dir, common_skills_dir, procedures_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+        handler = self._make_handler(anima_dir, common_skills_dir)
+        with patch("core.paths.get_common_skills_dir", return_value=common_skills_dir):
+            result = handler._handle_skill({"skill_name": "nonexistent"})
+
+        assert "見つかりません" in result
+
+    def test_handle_skill_empty_name_returns_error(self, tmp_path: Path):
+        """ToolHandler._handle_skill with empty skill_name returns error."""
+        anima_dir = tmp_path / "animas" / "alice"
+        anima_dir.mkdir(parents=True)
+        common_skills_dir = tmp_path / "common_skills"
+        common_skills_dir.mkdir(parents=True)
+
+        handler = self._make_handler(anima_dir, common_skills_dir)
+        result = handler._handle_skill({"skill_name": ""})
+
+        assert "必須" in result
+
+    def test_handle_skill_path_traversal_blocked(self, tmp_path: Path):
+        """ToolHandler._handle_skill rejects path traversal attempts."""
+        anima_dir = tmp_path / "animas" / "alice"
+        skills_dir = anima_dir / "skills"
+        common_skills_dir = tmp_path / "common_skills"
+        procedures_dir = anima_dir / "procedures"
+        for d in (anima_dir, skills_dir, common_skills_dir, procedures_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+        # Create a decoy file outside skills directory
+        decoy = tmp_path / "secret.md"
+        decoy.write_text("TOP SECRET DATA", encoding="utf-8")
+
+        handler = self._make_handler(anima_dir, common_skills_dir)
+        with patch("core.paths.get_common_skills_dir", return_value=common_skills_dir):
+            result = handler._handle_skill({"skill_name": "../../secret"})
+
+        assert "見つかりません" in result
+        assert "TOP SECRET DATA" not in result

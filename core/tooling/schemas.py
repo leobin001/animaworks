@@ -816,6 +816,12 @@ def build_tool_list(
         tools.extend(TOOL_MANAGEMENT_TOOLS)
     if include_task_tools:
         tools.extend(TASK_TOOLS)
+    if external_schemas:
+        tools.extend(external_schemas)
+    tools = apply_db_descriptions(tools)
+
+    # Skill tool description is dynamically generated — append AFTER
+    # apply_db_descriptions to prevent DB overwrite of <available_skills>.
     if include_skill_tools:
         from core.tooling.skill_tool import build_skill_tool_description
 
@@ -824,12 +830,8 @@ def build_tool_list(
             common_skill_metas or [],
             procedure_metas or [],
         )
-        # Create a copy with dynamic description
         skill_tool_schema = {**SKILL_TOOLS[0], "description": desc}
         tools.append(skill_tool_schema)
-    if external_schemas:
-        tools.extend(external_schemas)
-    tools = apply_db_descriptions(tools)
     return tools
 
 

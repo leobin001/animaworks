@@ -246,6 +246,49 @@ class TestResolveSkillPath:
         assert path is None
         assert skill_type == ""
 
+    # ── Path traversal guard ────────────────────────────
+
+    @pytest.mark.parametrize(
+        "malicious_name",
+        [
+            "../../etc/passwd",
+            "../secret",
+            "foo/bar",
+            "foo\\bar",
+            "..\\windows\\system32",
+            "skills/../../../etc/shadow",
+        ],
+    )
+    def test_path_traversal_rejected(self, tmp_path: Path, malicious_name: str):
+        """Names containing /, \\, or .. must be rejected."""
+        skills = tmp_path / "skills"
+        common = tmp_path / "common_skills"
+        procedures = tmp_path / "procedures"
+        skills.mkdir(parents=True)
+        common.mkdir(parents=True)
+        procedures.mkdir(parents=True)
+
+        path, skill_type = _resolve_skill_path(
+            malicious_name, skills, common, procedures
+        )
+        assert path is None
+        assert skill_type == ""
+
+    def test_valid_name_with_hyphen_and_underscore(self, tmp_path: Path):
+        """Names with hyphens and underscores are valid."""
+        skills = tmp_path / "skills"
+        common = tmp_path / "common_skills"
+        procedures = tmp_path / "procedures"
+        _make_skill_file(skills, "my-skill_v2")
+        common.mkdir(parents=True)
+        procedures.mkdir(parents=True)
+
+        path, skill_type = _resolve_skill_path(
+            "my-skill_v2", skills, common, procedures
+        )
+        assert path == skills / "my-skill_v2.md"
+        assert skill_type == "個人"
+
 
 # ── _strip_frontmatter ───────────────────────────────────
 
@@ -510,3 +553,19 @@ class TestLoadAndRenderSkill:
         )
         assert "# Hiring" in result
         assert "Hiring process." in result
+
+    def test_path_traversal_returns_error(self, tmp_path: Path):
+        """Path traversal attempts return error, not file contents."""
+        anima_dir, skills_dir, common, procs = self._setup_dirs(tmp_path)
+        # Create a file that traversal would try to reach
+        secret = tmp_path / "secret.md"
+        secret.write_text("TOP SECRET", encoding="utf-8")
+        _make_skill_file(skills_dir, "legit", content="# Legit skill")
+
+        result = load_and_render_skill(
+            "../../secret", anima_dir, skills_dir, common, procs
+        )
+        assert "見つかりません" in result
+        assert "TOP SECRET" not in result
+        # Available list should show legit skills
+        assert "legit" in result

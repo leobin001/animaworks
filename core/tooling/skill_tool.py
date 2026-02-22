@@ -149,6 +149,10 @@ def _resolve_skill_path(
     procedures_dir: Path,
 ) -> tuple[Path | None, str]:
     """Resolve skill name to file path. Returns (path, type)."""
+    # Guard against path traversal
+    if "/" in name or "\\" in name or ".." in name:
+        return None, ""
+
     # 1. Personal skills (highest priority)
     candidate = skills_dir / f"{name}.md"
     if candidate.is_file():
