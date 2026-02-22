@@ -387,6 +387,7 @@ function _replayEvent(event, el) {
     case "heartbeat":
     case "heartbeat_start":
     case "heartbeat_end":
+    case "heartbeat_reflection":
     case "cron":
     case "cron_executed":
       if (_highlightDesk && anima) {
