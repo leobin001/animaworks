@@ -271,7 +271,7 @@ class AnthropicFallbackExecutor(BaseExecutor):
 
             tool_results = []
             for tu in tool_uses:
-                result = self._tool_handler.handle(tu.name, tu.input)
+                result = self._tool_handler.handle(tu.name, tu.input, tu.id)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tu.id,

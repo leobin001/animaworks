@@ -1145,10 +1145,34 @@ async function _loadTranscript(date) {
 
   try {
     const data = await api(`/api/animas/${encodeURIComponent(_selectedAnima)}/transcripts/${encodeURIComponent(date)}`);
-    _renderConversationDetail(data);
+    _renderTranscriptDetail(data);
   } catch {
     if (conv) conv.innerHTML = '<div class="loading-placeholder">読み込み失敗</div>';
   }
+}
+
+function _renderTranscriptDetail(data) {
+  const conv = _$("chatHistoryConversation");
+  if (!conv) return;
+
+  let html = "";
+  if (data.turns && data.turns.length > 0) {
+    for (const t of data.turns) {
+      const ts = t.timestamp ? timeStr(t.timestamp) : "";
+      const bubbleClass = t.role === "assistant" ? "assistant" : "user";
+      const roleLabel = t.role === "human" ? "ユーザー" : t.role;
+      const content = t.role === "assistant" ? renderMarkdown(t.content || "") : escapeHtml(t.content || "");
+      html += `
+        <div class="history-turn">
+          <div class="history-turn-meta">${ts} - ${escapeHtml(roleLabel)}</div>
+          <div class="chat-bubble ${bubbleClass}">${content}</div>
+        </div>`;
+    }
+  }
+
+  if (!html) html = '<div class="loading-placeholder">会話データがありません</div>';
+  conv.innerHTML = html;
+  conv.scrollTop = conv.scrollHeight;
 }
 
 async function _loadEpisode(date) {
