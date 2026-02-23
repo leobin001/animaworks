@@ -70,7 +70,7 @@ command: /usr/local/bin/backup.sh
 ## Slack通知
 schedule: 0 9 * * 0-4
 type: command
-tool: slack_send_message
+tool: slack_send
 args:
   channel: "#general"
   message: "おはようございます！"
