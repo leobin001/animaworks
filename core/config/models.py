@@ -940,8 +940,9 @@ def update_injection_model(anima_dir: Path, model_display: str) -> bool:
     if not injection_path.is_file():
         return False
     content = injection_path.read_text(encoding="utf-8")
+    safe_display = model_display.replace("\\", "\\\\").replace("&", "\\&")
     new_content, count = _INJECTION_MODEL_RE.subn(
-        rf"\g<1>{model_display}", content
+        rf"\g<1>{safe_display}", content
     )
     if count == 0:
         return False
@@ -955,7 +956,7 @@ def update_status_model(
     model: str | None = None,
     credential: str | None = None,
 ) -> None:
-    """Update model/credential in an anima's status.json."""
+    """Update model/credential in an anima's status.json (atomic write)."""
     status_path = anima_dir / "status.json"
     if not status_path.is_file():
         raise FileNotFoundError(f"status.json not found: {status_path}")
@@ -964,10 +965,12 @@ def update_status_model(
         data["model"] = model
     if credential is not None:
         data["credential"] = credential
-    status_path.write_text(
+    tmp = status_path.with_suffix(".tmp")
+    tmp.write_text(
         json.dumps(data, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    tmp.replace(status_path)
 
 
 def _resolve_supervisor_name(raw: str) -> str | None:
