@@ -67,6 +67,51 @@ _EXPOSED_TOOL_NAMES: frozenset[str] = frozenset({
 })
 
 
+# Cached original parameter schemas (before relaxation) for type coercion
+_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {}
+
+
+def _relax_integer_types(schema: dict[str, Any]) -> dict[str, Any]:
+    """Accept string values for integer parameters in MCP inputSchema.
+
+    LLMs sometimes serialize numbers as strings (e.g. ``"10"`` instead
+    of ``10``).  The MCP SDK validates strictly against the inputSchema,
+    so we widen ``"type": "integer"`` to ``["integer", "string"]`` to
+    let the call through.  Actual coercion happens in ``_coerce_integers``.
+    """
+    import copy
+
+    schema = copy.deepcopy(schema)
+    for _name, prop in schema.get("properties", {}).items():
+        if prop.get("type") == "integer":
+            prop["type"] = ["integer", "string"]
+    return schema
+
+
+def _coerce_integers(
+    arguments: dict[str, Any],
+    tool_name: str,
+) -> dict[str, Any]:
+    """Coerce string-valued integer arguments to actual ints.
+
+    Matches against the canonical schema to find integer fields,
+    then converts any string values that look numeric.
+    """
+    schema = _TOOL_SCHEMAS.get(tool_name)
+    if not schema:
+        return arguments
+    props = schema.get("properties", {})
+    for key, prop in props.items():
+        if prop.get("type") == "integer" and key in arguments:
+            val = arguments[key]
+            if isinstance(val, str):
+                try:
+                    arguments[key] = int(val)
+                except (ValueError, TypeError):
+                    pass
+    return arguments
+
+
 def _build_mcp_tools() -> list[Tool]:
     """Convert canonical AnimaWorks schemas to MCP Tool objects.
 
@@ -103,6 +148,13 @@ def _build_mcp_tools() -> list[Tool]:
 
     all_schemas = apply_db_descriptions(all_schemas)
 
+    # Cache original schemas for type coercion lookup
+    for schema in all_schemas:
+        if schema["name"] in _EXPOSED_TOOL_NAMES:
+            _TOOL_SCHEMAS[schema["name"]] = schema.get(
+                "parameters", {}
+            )
+
     # Generate dynamic description for the skill tool
     _skill_description = _build_skill_description()
 
@@ -115,11 +167,13 @@ def _build_mcp_tools() -> list[Tool]:
         # Override skill tool description with dynamic content
         if name == "skill" and _skill_description:
             desc = _skill_description
+        input_schema = schema.get("parameters", {"type": "object", "properties": {}})
+        input_schema = _relax_integer_types(input_schema)
         tools.append(
             Tool(
                 name=name,
                 description=desc,
-                inputSchema=schema.get("parameters", {"type": "object", "properties": {}}),
+                inputSchema=input_schema,
             )
         )
 
@@ -330,8 +384,10 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextCon
             )
         ]
 
+    coerced_args = _coerce_integers(dict(arguments or {}), name)
+
     try:
-        result = await asyncio.to_thread(handler.handle, name, arguments or {})
+        result = await asyncio.to_thread(handler.handle, name, coerced_args)
         return [TextContent(type="text", text=result)]
     except Exception as exc:
         logger.exception("Unhandled error calling tool '%s'", name)
