@@ -25,7 +25,6 @@ from core.config.models import (
     save_config,
 )
 from core.exceptions import AnimaWorksError  # noqa: F401
-from core.messenger import Messenger
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +181,21 @@ def sync_org_structure(
                 disk_supervisor,
             )
 
-    # ── Phase 4: persist if anything changed ─────────────────────
+    # ── Phase 4: prune config entries with no directory on disk ──
+
+    for cname in list(config.animas.keys()):
+        if cname in discovered:
+            continue
+        candidate = animas_dir / cname
+        if not candidate.is_dir():
+            del config.animas[cname]
+            changed = True
+            logger.info(
+                "Org sync: pruned config entry '%s' (no directory on disk)",
+                cname,
+            )
+
+    # ── Phase 5: persist if anything changed ─────────────────────
 
     if changed:
         save_config(config, config_path)
@@ -247,37 +260,97 @@ def _find_orphan_supervisor(
     return None
 
 
+_TRIVIAL_ENTRIES = frozenset({
+    ".orphan_notified",
+    "vectordb",
+    "status.json",
+    "index_meta.json",
+    "identity.md",
+})
+
+
+def _is_trivial_orphan(entry: Path) -> bool:
+    """Return True if the orphan directory contains only trivial leftovers.
+
+    Trivial entries are vectordb dirs, marker files, etc. that carry no
+    user-meaningful state and can be safely auto-removed.
+    """
+    try:
+        children = {c.name for c in entry.iterdir()}
+    except OSError:
+        return False
+    return children.issubset(_TRIVIAL_ENTRIES)
+
+
+def _auto_cleanup_orphan(entry: Path) -> bool:
+    """Remove a trivial orphan directory tree and its config entry.
+
+    Returns True on success.
+    """
+    import shutil
+
+    try:
+        shutil.rmtree(entry)
+        logger.info("Orphan detection: auto-removed trivial orphan '%s'", entry.name)
+    except OSError:
+        logger.warning(
+            "Orphan detection: failed to auto-remove '%s'",
+            entry.name,
+            exc_info=True,
+        )
+        return False
+
+    # Also remove from config.json if present
+    try:
+        from core.config.models import unregister_anima_from_config
+
+        data_dir = entry.parent.parent  # animas_dir -> data_dir
+        if unregister_anima_from_config(data_dir, entry.name):
+            logger.info(
+                "Orphan detection: unregistered '%s' from config.json",
+                entry.name,
+            )
+    except Exception:
+        logger.debug(
+            "Orphan detection: config cleanup skipped for '%s'",
+            entry.name,
+            exc_info=True,
+        )
+
+    return True
+
+
 def detect_orphan_animas(
     animas_dir: Path,
     shared_dir: Path,
     age_threshold_s: float = 300,
 ) -> list[dict[str, str]]:
-    """Detect anima directories missing a valid identity.md and notify supervisors.
+    """Detect and auto-clean orphan anima directories.
 
     A directory is considered *orphan* when:
 
     - ``identity.md`` does not exist, **or**
     - ``identity.md`` is empty or contains only ``"未定義"``.
 
-    Directories that start with ``_`` or ``.``, directories younger than
-    *age_threshold_s* seconds (possibly still being created), and directories
-    already bearing a ``.orphan_notified`` marker are skipped.
+    Directories that start with ``_`` or ``.``, and directories younger than
+    *age_threshold_s* seconds (possibly still being created) are skipped.
 
-    For each orphan the function:
-
-    1. Resolves a supervisor via :func:`_find_orphan_supervisor`.
-    2. Sends a ``system_alert`` message through :class:`~core.messenger.Messenger`.
-    3. Writes a ``.orphan_notified`` marker so repeated runs don't re-notify.
+    **Trivial orphans** (containing only ``vectordb/``, ``.orphan_notified``,
+    ``status.json``, or ``index_meta.json``) are automatically deleted.
+    **Non-trivial orphans** (containing episodes, knowledge, state, etc.)
+    are logged as warnings for human review but are *not* messaged to any
+    Anima—since Animas cannot delete directories.
 
     Args:
         animas_dir: Runtime animas directory (e.g. ``~/.animaworks/animas/``).
-        shared_dir: Shared directory used by Messenger.
+        shared_dir: Shared directory (kept for backward compat, no longer
+            used for messaging).
         age_threshold_s: Minimum directory age in seconds before it is
             considered orphan.  Defaults to 300 (5 minutes).
 
     Returns:
-        List of dicts with keys ``name``, ``supervisor``, and ``notified``
-        (``"yes"`` or ``"no"``).
+        List of dicts with keys ``name`` and ``action``
+        (``"auto_removed"``, ``"logged"``, or ``"skipped"``).
     """
     if not animas_dir.is_dir():
         return []
@@ -291,11 +364,6 @@ def detect_orphan_animas(
 
         # Skip hidden / internal directories
         if entry.name.startswith("_") or entry.name.startswith("."):
-            continue
-
-        # Skip if already notified
-        marker = entry / ".orphan_notified"
-        if marker.exists():
             continue
 
         # Check identity.md validity
@@ -322,55 +390,39 @@ def detect_orphan_animas(
         except OSError:
             continue
 
-        # Resolve supervisor and send notification
-        supervisor = _find_orphan_supervisor(entry, animas_dir)
-        notified = "no"
+        # Trivial orphans → auto-remove
+        if _is_trivial_orphan(entry):
+            removed = _auto_cleanup_orphan(entry)
+            results.append({
+                "name": entry.name,
+                "action": "auto_removed" if removed else "skipped",
+            })
+            continue
 
-        if supervisor:
-            try:
-                messenger = Messenger(shared_dir, "system")
-                messenger.send(
-                    to=supervisor,
-                    content=(
-                        f"[Orphan Detection] Anima directory '{entry.name}' "
-                        f"has no valid identity.md.  Please review and either "
-                        f"complete setup or remove the directory."
-                    ),
-                    msg_type="system_alert",
-                )
-                notified = "yes"
-                logger.info(
-                    "Orphan detection: notified '%s' about orphan '%s'",
-                    supervisor,
-                    entry.name,
-                )
-            except Exception:
-                logger.exception(
-                    "Orphan detection: failed to notify '%s' about '%s'",
-                    supervisor,
-                    entry.name,
-                )
+        # Non-trivial orphans → log only (no Anima notification)
+        marker = entry / ".orphan_notified"
+        if marker.exists():
+            continue
 
-        # Write marker regardless of notification success so we don't retry
+        logger.warning(
+            "Orphan detection: non-trivial orphan '%s' has no valid "
+            "identity.md — manual review recommended (contents: %s)",
+            entry.name,
+            ", ".join(sorted(c.name for c in entry.iterdir())),
+        )
+
         try:
-            marker.write_text(
-                f"notified={notified} supervisor={supervisor or 'none'}\n",
-                encoding="utf-8",
-            )
+            marker.write_text("logged\n", encoding="utf-8")
         except OSError:
-            logger.warning(
-                "Orphan detection: could not write marker for '%s'",
-                entry.name,
-            )
+            pass
 
         results.append({
             "name": entry.name,
-            "supervisor": supervisor or "",
-            "notified": notified,
+            "action": "logged",
         })
 
     if results:
-        logger.info("Orphan detection: found %d orphan(s)", len(results))
+        logger.info("Orphan detection: processed %d orphan(s)", len(results))
     else:
         logger.debug("Orphan detection: no orphans found")
 

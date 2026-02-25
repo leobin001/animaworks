@@ -40,7 +40,7 @@ class TestReadModelConfigFromMd:
         mc = reader._read_model_config_from_md()
 
         assert isinstance(mc, ModelConfig)
-        assert mc.model == "claude-sonnet-4-20250514"
+        assert mc.model == "claude-sonnet-4-6"
         assert mc.max_tokens == 4096
         assert mc.max_turns == 20
 
@@ -53,7 +53,7 @@ class TestReadModelConfigFromMd:
         mc = reader._read_model_config_from_md()
 
         assert isinstance(mc, ModelConfig)
-        assert mc.model == "claude-sonnet-4-20250514"
+        assert mc.model == "claude-sonnet-4-6"
 
     def test_parses_all_fields(
         self, reader: ConfigReader, anima_dir: Path,
@@ -241,6 +241,7 @@ class TestReadModelConfig:
         mock_credential = MagicMock()
         mock_credential.api_key = "sk-test"
         mock_credential.base_url = None
+        mock_credential.keys = {}
 
         config_path = MagicMock()
         config_path.exists.return_value = True
@@ -284,7 +285,7 @@ class TestReadModelConfig:
 
         mock_config = MagicMock()
         mock_resolved = MagicMock()
-        mock_resolved.model = "claude-sonnet-4-20250514"
+        mock_resolved.model = "claude-sonnet-4-6"
         mock_resolved.fallback_model = None
         mock_resolved.max_tokens = 4096
         mock_resolved.max_turns = 20
@@ -301,6 +302,7 @@ class TestReadModelConfig:
         mock_credential = MagicMock()
         mock_credential.api_key = ""
         mock_credential.base_url = None
+        mock_credential.keys = {}
 
         config_path = MagicMock()
         config_path.exists.return_value = True

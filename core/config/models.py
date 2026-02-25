@@ -84,10 +84,15 @@ class AnimaModelConfig(BaseModel):
     llm_timeout: int | None = None  # LLM API timeout (seconds); None = auto
 
 
+# ── Default model names (single source of truth) ─────────────────────────────
+DEFAULT_ANIMA_MODEL: str = "claude-sonnet-4-6"
+DEFAULT_CONSOLIDATION_MODEL: str = f"anthropic/{DEFAULT_ANIMA_MODEL}"
+
+
 class AnimaDefaults(BaseModel):
     """Concrete defaults applied when a per-anima field is None."""
 
-    model: str = "claude-sonnet-4-20250514"
+    model: str = DEFAULT_ANIMA_MODEL
     fallback_model: str | None = None
     max_tokens: int = 4096
     max_turns: int = 20
@@ -133,7 +138,7 @@ class ConsolidationConfig(BaseModel):
     daily_enabled: bool = True
     daily_time: str = "02:00"  # Format: HH:MM
     min_episodes_threshold: int = 1
-    llm_model: str = "anthropic/claude-sonnet-4-20250514"
+    llm_model: str = DEFAULT_CONSOLIDATION_MODEL
     max_turns: int = 30  # Tool-call loop limit for consolidation tasks
     weekly_enabled: bool = True  # Phase 3 implementation
     weekly_time: str = "sun:03:00"  # Format: day:HH:MM
@@ -516,6 +521,7 @@ DEFAULT_MODEL_MODE_PATTERNS: dict[str, str] = {
     "openai/*": "A",
     "azure/*": "A",
     "google/*": "A",
+    "vertex_ai/*": "A",
     "mistral/*": "A",
     "xai/*": "A",
     "cohere/*": "A",
@@ -576,10 +582,16 @@ KNOWN_MODELS: list[dict[str, str]] = [
     {"name": "openai/gpt-4o",                "mode": "A", "note": "音声対応・レガシー"},
     {"name": "openai/o3-2025-04-16",         "mode": "A", "note": "推論特化"},
     {"name": "openai/o4-mini-2025-04-16",    "mode": "A", "note": "推論・低コスト"},
+    # ── Azure OpenAI (Mode A) ──────────────────────────────────────────────────
+    {"name": "azure/gpt-4.1-mini",           "mode": "A", "note": "Azure OpenAI 4.1-mini"},
+    {"name": "azure/gpt-4.1",               "mode": "A", "note": "Azure OpenAI 4.1"},
     # ── Google Gemini (Mode A) ────────────────────────────────────────────────
     {"name": "google/gemini-2.5-pro",        "mode": "A", "note": "最高性能"},
     {"name": "google/gemini-2.5-flash",      "mode": "A", "note": "高速バランス"},
     {"name": "google/gemini-2.5-flash-lite", "mode": "A", "note": "軽量・高スループット"},
+    # ── Vertex AI (Mode A) ────────────────────────────────────────────────────
+    {"name": "vertex_ai/gemini-2.5-flash",   "mode": "A", "note": "Vertex AI Flash"},
+    {"name": "vertex_ai/gemini-2.5-pro",     "mode": "A", "note": "Vertex AI Pro"},
     # ── xAI Grok (Mode A) ─────────────────────────────────────────────────────
     {"name": "xai/grok-4",                   "mode": "A", "note": "最新Grok"},
     {"name": "xai/grok-3-beta",              "mode": "A", "note": "安定版"},
@@ -766,6 +778,7 @@ def load_model_config(anima_dir: Path) -> "ModelConfig":
         resolved_mode=mode,
         thinking=resolved.thinking,
         llm_timeout=resolved.llm_timeout,
+        extra_keys=credential.keys or {},
     )
 
 
@@ -871,7 +884,7 @@ def resolve_context_window(
          defaults)
 
     Args:
-        model_name: The model name to resolve (e.g. ``"claude-sonnet-4-20250514"``).
+        model_name: The model name to resolve (e.g. ``"claude-sonnet-4-6"``).
         config: Optional config instance.  Loaded lazily if not provided.
 
     Returns:

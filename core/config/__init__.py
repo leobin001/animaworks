@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 from core.config.models import (
+    DEFAULT_ANIMA_MODEL,
+    DEFAULT_CONSOLIDATION_MODEL,
     DEFAULT_MODEL_MODE_PATTERNS,
     DEFAULT_MODEL_MODES,
     AnimaWorksConfig,

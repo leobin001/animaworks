@@ -72,10 +72,18 @@ def create_from_template(
         raise FileExistsError(f"Anima already exists: {name}")
 
     shutil.copytree(template_dir, anima_dir)
-    _ensure_runtime_subdirs(anima_dir)
-    _init_state_files(anima_dir)
-    _place_bootstrap(anima_dir)
-    _ensure_status_json(anima_dir)
+    try:
+        _ensure_runtime_subdirs(anima_dir)
+        _init_state_files(anima_dir)
+        _place_bootstrap(anima_dir)
+        _ensure_status_json(anima_dir)
+    except Exception:
+        logger.error(
+            "Failed to create anima '%s' from template '%s'; rolling back",
+            name, template_name,
+        )
+        shutil.rmtree(anima_dir, ignore_errors=True)
+        raise
 
     logger.info("Created anima '%s' from template '%s'", name, template_name)
     return anima_dir

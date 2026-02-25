@@ -80,14 +80,13 @@ class TestOrgTreeE2E:
 
 
 class TestOrphanDetectionE2E:
-    """E2E: Orphan detection finds incomplete directories and notifies."""
+    """E2E: Orphan detection auto-cleans trivial orphans and logs non-trivial."""
 
-    def test_detect_and_notify_orphan(self, data_dir, make_anima):
-        """Full detection + notification flow for an orphan directory."""
+    def test_nontrivial_orphan_logged_with_marker(self, data_dir, make_anima):
+        """Non-trivial orphan is logged and gets a .orphan_notified marker."""
         make_anima("sakura")
         make_anima("rin", supervisor="sakura")
 
-        # Create an orphan (no identity.md, has status.json with supervisor)
         orphan_dir = data_dir / "animas" / "rie"
         orphan_dir.mkdir()
         (orphan_dir / "state").mkdir()
@@ -103,24 +102,24 @@ class TestOrphanDetectionE2E:
 
         assert len(orphans) == 1
         assert orphans[0]["name"] == "rie"
-        assert orphans[0]["supervisor"] == "rin"
+        assert orphans[0]["action"] == "logged"
 
-        # Notification marker should be created
         assert (orphan_dir / ".orphan_notified").exists()
 
-        # Second run should skip the already-notified orphan
+        # Second run should skip the already-logged orphan
         orphans2 = detect_orphan_animas(
             data_dir / "animas", data_dir / "shared", age_threshold_s=0
         )
         assert orphans2 == []
 
-    def test_orphan_notification_reaches_inbox(self, data_dir, make_anima):
-        """Orphan notification should create a message file in the supervisor's inbox."""
+    def test_no_inbox_message_sent(self, data_dir, make_anima):
+        """Orphan detection must NOT send messages to any Anima's inbox."""
         make_anima("sakura")
         make_anima("rin", supervisor="sakura")
 
         orphan_dir = data_dir / "animas" / "rie"
         orphan_dir.mkdir()
+        (orphan_dir / "state").mkdir()
         (orphan_dir / "status.json").write_text(
             json.dumps({"supervisor": "rin"}), encoding="utf-8"
         )
@@ -132,17 +131,13 @@ class TestOrphanDetectionE2E:
         )
 
         inbox = data_dir / "shared" / "inbox" / "rin"
-        messages = list(inbox.glob("*.json"))
-        assert len(messages) >= 1
+        messages = list(inbox.glob("*.json")) if inbox.exists() else []
+        assert len(messages) == 0
 
-        # Verify message content
-        msg_data = json.loads(messages[0].read_text(encoding="utf-8"))
-        assert "rie" in msg_data.get("content", "")
-        assert msg_data.get("type") == "system_alert"
+    def test_trivial_orphan_auto_removed(self, data_dir, make_anima):
+        """A trivial orphan (empty dir) is automatically removed."""
+        make_anima("sakura")
 
-    def test_orphan_without_supervisor_still_detected(self, data_dir, make_anima):
-        """An orphan with no resolvable supervisor is still listed in results."""
-        # Create orphan with no status.json and no config entry
         orphan_dir = data_dir / "animas" / "rie"
         orphan_dir.mkdir()
 
@@ -152,6 +147,121 @@ class TestOrphanDetectionE2E:
             data_dir / "animas", data_dir / "shared", age_threshold_s=0
         )
 
-        # Should still be detected even if notification fails
         assert len(orphans) == 1
         assert orphans[0]["name"] == "rie"
+        assert orphans[0]["action"] == "auto_removed"
+        assert not orphan_dir.exists()
+
+    def test_auto_removed_orphan_cleans_config(self, data_dir, make_anima):
+        """Auto-removal of orphan should also remove its config.json entry."""
+        make_anima("sakura")
+
+        from core.config.models import (
+            AnimaModelConfig,
+            invalidate_cache,
+            load_config,
+            save_config,
+        )
+
+        config = load_config(data_dir / "config.json")
+        config.animas["ghost"] = AnimaModelConfig()
+        save_config(config, data_dir / "config.json")
+        invalidate_cache()
+
+        orphan_dir = data_dir / "animas" / "ghost"
+        orphan_dir.mkdir()
+        (orphan_dir / "vectordb").mkdir()
+
+        from core.org_sync import detect_orphan_animas
+
+        orphans = detect_orphan_animas(
+            data_dir / "animas", data_dir / "shared", age_threshold_s=0
+        )
+
+        assert len(orphans) == 1
+        assert orphans[0]["action"] == "auto_removed"
+        assert not orphan_dir.exists()
+
+        invalidate_cache()
+        updated = load_config(data_dir / "config.json")
+        assert "ghost" not in updated.animas
+        assert "sakura" in updated.animas
+
+
+class TestSyncOrgPruneE2E:
+    """E2E: sync_org_structure prunes stale config entries."""
+
+    def test_prune_stale_config_entry(self, data_dir, make_anima):
+        """Config entries for deleted animas are pruned by sync."""
+        make_anima("sakura")
+
+        from core.config.models import (
+            AnimaModelConfig,
+            invalidate_cache,
+            load_config,
+            save_config,
+        )
+
+        config = load_config(data_dir / "config.json")
+        config.animas["deleted"] = AnimaModelConfig(supervisor="sakura")
+        save_config(config, data_dir / "config.json")
+        invalidate_cache()
+
+        from core.org_sync import sync_org_structure
+
+        sync_org_structure(data_dir / "animas", data_dir / "config.json")
+
+        invalidate_cache()
+        updated = load_config(data_dir / "config.json")
+        assert "deleted" not in updated.animas
+        assert "sakura" in updated.animas
+
+    def test_existing_dir_without_identity_not_pruned(self, data_dir, make_anima):
+        """Dirs that exist on disk (even without identity.md) keep their config entry."""
+        make_anima("sakura")
+
+        from core.config.models import (
+            AnimaModelConfig,
+            invalidate_cache,
+            load_config,
+            save_config,
+        )
+
+        orphan = data_dir / "animas" / "orphan"
+        orphan.mkdir()
+
+        config = load_config(data_dir / "config.json")
+        config.animas["orphan"] = AnimaModelConfig()
+        save_config(config, data_dir / "config.json")
+        invalidate_cache()
+
+        from core.org_sync import sync_org_structure
+
+        sync_org_structure(data_dir / "animas", data_dir / "config.json")
+
+        invalidate_cache()
+        updated = load_config(data_dir / "config.json")
+        assert "orphan" in updated.animas
+
+    def test_full_lifecycle_create_orphan_detect_sync(self, data_dir, make_anima):
+        """Full lifecycle: create anima, delete dir, detect orphan, sync prune."""
+        make_anima("sakura")
+        make_anima("temp")
+
+        from core.config.models import invalidate_cache, load_config
+
+        invalidate_cache()
+        config_before = load_config(data_dir / "config.json")
+        assert "temp" in config_before.animas
+
+        import shutil
+        shutil.rmtree(data_dir / "animas" / "temp")
+
+        from core.org_sync import sync_org_structure
+
+        sync_org_structure(data_dir / "animas", data_dir / "config.json")
+
+        invalidate_cache()
+        config_after = load_config(data_dir / "config.json")
+        assert "temp" not in config_after.animas
+        assert "sakura" in config_after.animas

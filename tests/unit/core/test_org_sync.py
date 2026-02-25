@@ -465,3 +465,42 @@ class TestSyncOrgStructure:
         # Both animas returned even though only bob was newly added
         assert "alice" in result
         assert "bob" in result
+
+    def test_prunes_config_entry_with_no_directory(
+        self, animas_dir: Path, config_path: Path,
+    ) -> None:
+        """Config entries with no corresponding directory on disk are pruned."""
+        _make_anima(animas_dir, "alice")
+
+        # Add a ghost entry for a non-existent anima
+        cfg = load_config(config_path)
+        cfg.animas["ghost"] = AnimaModelConfig()
+        save_config(cfg, config_path)
+        invalidate_cache()
+
+        sync_org_structure(animas_dir, config_path)
+
+        updated = load_config(config_path)
+        assert "ghost" not in updated.animas
+        assert "alice" in updated.animas
+
+    def test_prune_does_not_remove_existing_dir_without_identity(
+        self, animas_dir: Path, config_path: Path,
+    ) -> None:
+        """Config entries for directories that exist (even orphans) are NOT pruned."""
+        _make_anima(animas_dir, "alice")
+
+        # Create an orphan dir (no identity.md) but dir exists
+        orphan = animas_dir / "orphan"
+        orphan.mkdir()
+
+        cfg = load_config(config_path)
+        cfg.animas["orphan"] = AnimaModelConfig()
+        save_config(cfg, config_path)
+        invalidate_cache()
+
+        sync_org_structure(animas_dir, config_path)
+
+        updated = load_config(config_path)
+        # orphan dir exists on disk → entry kept
+        assert "orphan" in updated.animas

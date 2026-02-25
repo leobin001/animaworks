@@ -126,7 +126,15 @@ class ChromaVectorStore(VectorStore):
 
             persist_dir = get_data_dir() / "vectordb"
 
-        persist_dir.mkdir(parents=True, exist_ok=True)
+        if persist_dir.parent.exists():
+            persist_dir.mkdir(exist_ok=True)
+        else:
+            logger.warning(
+                "Parent directory does not exist for vectordb; "
+                "creating with parents: %s",
+                persist_dir,
+            )
+            persist_dir.mkdir(parents=True, exist_ok=True)
 
         logger.debug("Initializing ChromaDB at %s", persist_dir)
         self.client = chromadb.PersistentClient(path=str(persist_dir))

@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from core.config.models import DEFAULT_ANIMA_MODEL
+
 # Minimal valid config.json for tests.
 DEFAULT_TEST_CONFIG: dict[str, Any] = {
     "version": 1,
@@ -24,7 +26,7 @@ DEFAULT_TEST_CONFIG: dict[str, Any] = {
         "ollama": {"api_key": "", "base_url": "http://localhost:11434"},
     },
     "anima_defaults": {
-        "model": "claude-sonnet-4-20250514",
+        "model": DEFAULT_ANIMA_MODEL,
         "max_tokens": 1024,
         "max_turns": 5,
         "credential": "anthropic",
@@ -84,7 +86,7 @@ def create_anima_dir(
     identity: str = "# Test Anima\nA test digital anima for E2E testing.",
     injection: str = "",
     permissions: str = "",
-    model: str = "claude-sonnet-4-20250514",
+    model: str = DEFAULT_ANIMA_MODEL,
     execution_mode: str | None = None,
     credential: str | None = None,
     supervisor: str | None = None,

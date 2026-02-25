@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from core.config.models import DEFAULT_ANIMA_MODEL
+
 from core.time_utils import now_jst
 
 
@@ -64,7 +66,7 @@ class CronTask(BaseModel):
 class ModelConfig(BaseModel):
     """Per-anima API key, model, and endpoint configuration."""
 
-    model: str = "claude-sonnet-4-20250514"
+    model: str = DEFAULT_ANIMA_MODEL
     fallback_model: str | None = None
     max_tokens: int = 4096
     max_turns: int = 20
@@ -80,6 +82,7 @@ class ModelConfig(BaseModel):
     resolved_mode: str | None = None  # "S"/"A"/"B" — resolved from config
     thinking: bool | None = None  # Ollama think param (None = auto: off for ollama/)
     llm_timeout: int | None = None  # LLM API呼び出しタイムアウト（秒）
+    extra_keys: dict[str, str] = {}  # provider-specific credential keys (e.g. api_version, vertex_project)
 
 
 class AnimaConfig(BaseModel):

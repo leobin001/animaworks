@@ -7,6 +7,36 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-02-25
+
+### Changed
+
+- Update all default models to current generation: Opus 4 → Opus 4.6 ($5/$25, 67% cheaper), Sonnet 4 → Sonnet 4.6 (same price, 1M context), Haiku 4.5 → GPT-4.1-mini / Gemini 2.5 Flash
+- Role templates updated: engineer/manager use claude-opus-4-6, writer/general/researcher use claude-sonnet-4-6
+- Context window map: add 1M entries for Opus 4.6, Sonnet 4.6, GPT-4.1 family
+- Setup wizard: update provider model lists to current generation
+- Centralize default model name into `DEFAULT_ANIMA_MODEL` constant — future model updates only need 1 line change + role templates
+
+### Fixed
+
+- Orphan directory prevention: 3-layer defense (pre-creation validation, automatic cleanup, config consistency check)
+- `read_memory_file` returns directory listing on File not found instead of bare error
+- ToolCallRecord dataclass JSON serialization error
+- ARG_MAX exceeded: oversized system prompts passed via temp file
+
+### Added
+
+- Azure OpenAI `api_version` / Vertex AI credential passthrough to LiteLLM
+- `CHANGELOG.md` with auto-generation script (`scripts/generate_changelog.py`)
+- SSE/IPC layer separation — producer task decoupled architecture
+- Unified outbound rate limiting for `send_message` / `post_channel`
+
+### Performance
+
+- Reduce system prompt bloat: remove s_builtin section, add knowledge budget cap
+
+
+
 ## [0.3.0] - 2026-02-25
 
 First official release. AnimaWorks is a framework that treats AI agents not as
@@ -122,5 +152,5 @@ memory, and decision-making criteria.
 - Moved model mode patterns from config.json to models.json
 - Tool permissions changed from whitelist to default-allow (blacklist) model
 
-[Unreleased]: https://github.com/xuiltul/animaworks/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/xuiltul/animaworks/releases/tag/v0.3.0
+[Unreleased]: https://github.com/xuiltul/animaworks/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/xuiltul/animaworks/compare/v0.3.0...v0.3.1
