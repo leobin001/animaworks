@@ -18,6 +18,9 @@ let _refreshInterval = null;
 let _boundListeners = [];
 let _wsHandler = null;
 let _sidebarCollapsed = false;
+let _loadingMore = false;
+let _hasMore = false;
+let _currentOffset = 0;
 
 // ── DOM refs (local) ───────────────────────
 
@@ -352,7 +355,13 @@ function _renderMessages() {
 
   const wasAtBottom = _isScrolledToBottom(messagesEl);
 
-  messagesEl.innerHTML = _messages.map(msg => {
+  const loaderHtml = _hasMore
+    ? '<div class="board-messages-loader" style="text-align:center;padding:12px;color:#888;font-size:0.82rem;">読み込み中...</div>'
+    : (_messages.length >= _total && _total > 50
+      ? '<div class="board-messages-end" style="text-align:center;padding:8px;color:#666;font-size:0.8rem;">すべてのメッセージを表示しました</div>'
+      : '');
+
+  const msgItems = _messages.map(msg => {
     const from = msg.from || "unknown";
     const initial = from.charAt(0).toUpperCase();
     const isHuman = msg.source === "human";
@@ -374,6 +383,8 @@ function _renderMessages() {
         </div>
       </div>`;
   }).join("");
+
+  messagesEl.innerHTML = loaderHtml + msgItems;
 
   // Auto-scroll to bottom if user was already at bottom
   if (wasAtBottom) {
@@ -457,6 +468,7 @@ function _handleBoardPost(data) {
       text: data.text || "",
       source: data.source || "",
     });
+    _total += 1;
     _renderMessages();
     _scrollToBottom();
   }
