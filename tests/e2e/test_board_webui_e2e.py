@@ -268,6 +268,46 @@ class TestE2EReversePagination:
         assert len(all_texts) == 75
         assert all_texts == [f"msg-{i}" for i in range(75)]
 
+    async def test_three_page_traversal(self, tmp_path: Path):
+        """Post 125 messages (3 pages), traverse all, verify none lost."""
+        shared_dir = tmp_path / "shared"
+        shared_dir.mkdir()
+        _seed_channels(shared_dir)
+
+        channel_file = shared_dir / "channels" / "general.jsonl"
+        entries = [
+            json.dumps({
+                "ts": f"2026-02-25T{i // 60:02d}:{i % 60:02d}:00",
+                "from": "sakura",
+                "text": f"msg-{i}",
+                "source": "anima",
+            })
+            for i in range(125)
+        ]
+        channel_file.write_text("\n".join(entries) + "\n", encoding="utf-8")
+
+        app = _create_app(shared_dir)
+        transport = ASGITransport(app=app)
+        all_texts: list[str] = []
+        offset = 0
+        pages = 0
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            while True:
+                resp = await client.get(
+                    f"/api/channels/general?limit=50&offset={offset}"
+                )
+                data = resp.json()
+                page_texts = [m["text"] for m in data["messages"]]
+                all_texts = page_texts + all_texts
+                offset += len(data["messages"])
+                pages += 1
+                if not data["has_more"]:
+                    break
+
+        assert pages == 3, f"Expected 3 pages, got {pages}"
+        assert len(all_texts) == 125
+        assert all_texts == [f"msg-{i}" for i in range(125)]
+
     async def test_small_channel_single_page(self, tmp_path: Path):
         """Channel with < limit messages returns all with has_more=false."""
         shared_dir = tmp_path / "shared"

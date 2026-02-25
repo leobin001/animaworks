@@ -369,7 +369,7 @@ async function _loadOlderMessages() {
   if (!messagesEl) { _loadingMore = false; return; }
 
   const prevScrollHeight = messagesEl.scrollHeight;
-  _currentOffset += _messages.length;
+  _currentOffset = _messages.length;
 
   try {
     const data = await api(
