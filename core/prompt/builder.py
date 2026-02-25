@@ -533,6 +533,20 @@ def build_system_prompt(
                 _env = _env[:4800]
             parts.append(_env)
 
+    # ── Identity + Injection: immediately after environment ──────
+    # Placed here so the "# Identity" teaser in environment.md is
+    # resolved without intervening system boilerplate.
+    identity = memory.read_identity()
+    if identity:
+        if is_task:
+            identity = "\n".join(identity.split("\n")[:3])
+        parts.append(identity)
+
+    if not is_task:
+        injection = memory.read_injection()
+        if injection:
+            parts.append(injection)
+
     current_time = now_jst().strftime("%Y-%m-%d %H:%M (%Z)")
     parts.append(f"**現在時刻**: {current_time}")
 
@@ -548,7 +562,9 @@ def build_system_prompt(
         if _tdi:
             parts.append(_tdi)
 
-    # ── Group 2: あなた自身 ───────────────────────────────────
+    # ── Group 2: あなた自身（補足） ─────────────────────────────
+    # NOTE: identity.md / injection.md は Group 1 直後に注入済み。
+    #       ここでは bootstrap, vision, specialty, permissions を追加。
     parts.append("# 2. あなた自身")
 
     if not is_task and tier in (TIER_FULL, TIER_STANDARD):
@@ -560,17 +576,6 @@ def build_system_prompt(
         company_vision = memory.read_company_vision()
         if company_vision:
             parts.append(company_vision)
-
-    identity = memory.read_identity()
-    if identity:
-        if is_task:
-            identity = "\n".join(identity.split("\n")[:3])
-        parts.append(identity)
-
-    if not is_task:
-        injection = memory.read_injection()
-        if injection:
-            parts.append(injection)
 
     if not is_inbox and not is_heartbeat and tier in (TIER_FULL, TIER_STANDARD):
         specialty = memory.read_specialty_prompt()
