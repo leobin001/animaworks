@@ -1,6 +1,7 @@
 /* ── State & DOM refs ──────────────────────── */
 
 export const state = {
+  uiTheme: "default",
   currentUser: null,
   currentUserRole: null,
   authMode: null,

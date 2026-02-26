@@ -24,6 +24,7 @@ import { SwipeHandler } from "../../modules/touch.js";
 import { createLogger } from "../../shared/logger.js";
 import { createImageInput, initLightbox, renderChatImages } from "../../shared/image-input.js";
 import { getIcon } from "../../shared/activity-types.js";
+import { initOrgDashboard, disposeOrgDashboard, updateAnimaStatus, addActivityItem } from "./org-dashboard.js";
 
 const logger = createLogger("ws-app");
 
@@ -67,6 +68,8 @@ function cacheDom() {
   // 3D Office
   dom.officePanel = document.getElementById("wsOfficePanel");
   dom.officeCanvas = document.getElementById("wsOfficeCanvas");
+  dom.orgPanel = document.getElementById("wsOrgPanel");
+  dom.viewToggle = document.getElementById("wsViewToggle");
 
   // Conversation overlay (3-column)
   dom.convOverlay = document.getElementById("wsConvOverlay");
@@ -255,6 +258,52 @@ async function initOfficeIfNeeded() {
     setState({ officeInitialized: false });
   }
 }
+
+// ── View Switching ──────────────────────
+
+let _currentView = null; // '3d' | 'org'
+
+function getDefaultView() {
+  const theme = localStorage.getItem("aw-theme") || "default";
+  return theme === "business" ? "org" : "3d";
+}
+
+function getCurrentView() {
+  return localStorage.getItem("aw-workspace-view") || getDefaultView();
+}
+
+async function switchView(view) {
+  if (_currentView === view) return;
+  _currentView = view;
+  localStorage.setItem("aw-workspace-view", view);
+
+  if (view === "org") {
+    // Hide 3D, show org
+    dom.officePanel.classList.add("hidden");
+    dom.orgPanel.classList.remove("hidden");
+
+    const { animas } = getState();
+    await initOrgDashboard(dom.orgPanel, animas);
+  } else {
+    // Hide org, show 3D
+    dom.orgPanel.classList.add("hidden");
+    dom.officePanel.classList.remove("hidden");
+    disposeOrgDashboard();
+
+    await initOfficeIfNeeded();
+  }
+
+  updateViewToggle();
+}
+
+function updateViewToggle() {
+  if (!dom.viewToggle) return;
+  const is3d = _currentView === "3d";
+  dom.viewToggle.querySelector(".ws-view-toggle-3d").style.fontWeight = is3d ? "700" : "400";
+  dom.viewToggle.querySelector(".ws-view-toggle-org").style.fontWeight = is3d ? "400" : "700";
+}
+
+// ── Status Mapping ──────────────────────
 
 function mapAnimaStatusToAnim(status) {
   if (!status) return "idle";
@@ -1213,6 +1262,9 @@ function setupWebSocket() {
       lastAnimaStatus[data.name] = data.status;
       addActivity("system", data.name, `Status: ${data.status}`);
     }
+    if (_currentView === "org") {
+      updateAnimaStatus(data.name, data.status || data);
+    }
   }));
 
   // ── anima.interaction — inter-anima messaging visualization ──
@@ -1237,6 +1289,14 @@ function setupWebSocket() {
         to_person: data.to_person,
       },
     });
+    if (_currentView === "org") {
+      addActivityItem({
+        ts: data.ts || new Date().toISOString(),
+        type: "anima.interaction",
+        from: data.from_person || data.from || "",
+        summary: data.summary || "",
+      });
+    }
   }));
 
   wsUnsubscribers.push(onEvent("anima.heartbeat", (data) => {
@@ -1252,6 +1312,14 @@ function setupWebSocket() {
       ts: data.ts || localISOString(),
       summary: data.summary || "heartbeat completed",
     });
+    if (_currentView === "org") {
+      addActivityItem({
+        ts: data.ts || new Date().toISOString(),
+        type: "anima.heartbeat",
+        from: data.name || "",
+        summary: data.summary || "heartbeat completed",
+      });
+    }
   }));
 
   wsUnsubscribers.push(onEvent("anima.cron", (data) => {
@@ -1263,6 +1331,14 @@ function setupWebSocket() {
       ts: data.ts || localISOString(),
       summary: data.summary || `cron: ${data.task || ""}`,
     });
+    if (_currentView === "org") {
+      addActivityItem({
+        ts: data.ts || new Date().toISOString(),
+        type: "anima.cron",
+        from: data.name || "",
+        summary: data.summary || `cron: ${data.task || ""}`,
+      });
+    }
   }));
 
   // ── board.post — shared channel message ──
@@ -1298,6 +1374,14 @@ function setupWebSocket() {
         source: data.source || "",
       },
     });
+    if (_currentView === "org") {
+      addActivityItem({
+        ts: data.ts || new Date().toISOString(),
+        type: "board.post",
+        from,
+        summary: `[#${channel}] ${text}`,
+      });
+    }
   }));
 
   // ── anima.proactive_message — autonomous outbound messages ──
@@ -1573,8 +1657,8 @@ async function startDashboard() {
   if (dashboardInitialized) {
     await loadAnimas();
     await loadSystemStatus();
-    // Re-init office if needed
-    initOfficeIfNeeded();
+    const initialView = getCurrentView();
+    await switchView(initialView);
     return;
   }
   dashboardInitialized = true;
@@ -1671,8 +1755,17 @@ async function startDashboard() {
   // Activate default right tab
   activateRightTab("state");
 
-  // Auto-init 3D office (always visible now)
-  initOfficeIfNeeded();
+  // View switching: 3D office or org dashboard
+  const initialView = getCurrentView();
+  await switchView(initialView);
+
+  // View toggle button
+  if (dom.viewToggle) {
+    dom.viewToggle.addEventListener("click", () => {
+      const next = _currentView === "3d" ? "org" : "3d";
+      switchView(next);
+    });
+  }
 
   // Viewport & mobile responsive features
   initViewportHeightFallback();

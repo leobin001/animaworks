@@ -258,6 +258,12 @@ class HeartbeatConfig(BaseModel):
     max_messages_per_day: int = 100  # Global outbound DM limit per Anima per day
 
 
+class UIConfig(BaseModel):
+    """UI appearance and theme settings."""
+
+    theme: str = "default"
+
+
 class AnimaWorksConfig(BaseModel):
     version: int = 1
     setup_complete: bool = False
@@ -278,6 +284,7 @@ class AnimaWorksConfig(BaseModel):
     background_task: BackgroundTaskConfig = BackgroundTaskConfig()
     activity_log: ActivityLogConfig = ActivityLogConfig()
     heartbeat: HeartbeatConfig = HeartbeatConfig()
+    ui: UIConfig = UIConfig()
 
 
 # ---------------------------------------------------------------------------
