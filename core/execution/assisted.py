@@ -304,10 +304,18 @@ class AssistedExecutor(BaseExecutor):
         """Call LiteLLM ``acompletion`` without tools parameter."""
         import litellm
 
+        from core.config.models import resolve_max_tokens
+        from core.execution.base import is_adaptive_model, is_anthropic_claude, resolve_thinking_effort
+
+        _eff_max = max_tokens_override if max_tokens_override is not None else resolve_max_tokens(
+            self._model_config.model,
+            self._model_config.max_tokens,
+            self._model_config.thinking,
+        )
         kwargs: dict[str, Any] = {
             "model": self._model_config.model,
             "messages": messages,
-            "max_tokens": max_tokens_override if max_tokens_override is not None else self._model_config.max_tokens,
+            "max_tokens": _eff_max,
             "timeout": self._resolve_llm_timeout(),
         }
 
@@ -320,9 +328,22 @@ class AssistedExecutor(BaseExecutor):
 
         # Extended thinking / reasoning control
         if self._model_config.thinking is not None:
-            if self._model_config.model.startswith("bedrock/"):
+            model = self._model_config.model
+            if model.startswith("bedrock/"):
                 if self._model_config.thinking:
-                    kwargs["reasoning_effort"] = "medium"
+                    kwargs["reasoning_effort"] = resolve_thinking_effort(
+                        model, self._model_config.thinking_effort,
+                    )
+            elif is_anthropic_claude(model):
+                if self._model_config.thinking:
+                    if is_adaptive_model(model):
+                        kwargs["thinking"] = {"type": "adaptive"}
+                        kwargs["reasoning_effort"] = resolve_thinking_effort(
+                            model, self._model_config.thinking_effort,
+                        )
+                    else:
+                        kwargs["thinking"] = {"type": "enabled", "budget_tokens": 10000}
+                    kwargs["temperature"] = 1
             else:
                 kwargs["think"] = self._model_config.thinking
         elif self._model_config.model.startswith("ollama/"):

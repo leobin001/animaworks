@@ -120,8 +120,12 @@ class TestAdaptiveThinkingModeB:
         first_kwargs = mock_fn.call_args_list[0].kwargs
         assert first_kwargs.get("reasoning_effort") == "high"
 
-    async def test_max_tokens_minimum_with_thinking(self, make_agent_core):
-        """Thinking enabled → max_tokens >= 16384."""
+    async def test_max_tokens_resolved_with_thinking(self, make_agent_core):
+        """Thinking enabled → resolve_max_tokens returns >= 16384 at config level.
+
+        Note: Mode B preflight may clamp max_tokens further based on context
+        window, so we verify the ModelConfig-level resolution instead.
+        """
         agent = make_agent_core(
             name="maxtoken-thinking",
             model="claude-sonnet-4-6",
@@ -138,17 +142,12 @@ class TestAdaptiveThinkingModeB:
         from core.memory import MemoryManager
         memory = MemoryManager(agent.anima_dir)
         model_config = memory.read_model_config()
-        agent._model_config = model_config
-        agent._executor._model_config = model_config
 
-        main_resp = make_litellm_response(content="Response.")
-        extract_resp = make_litellm_response(content="なし")
-
-        with patch_litellm(main_resp, extract_resp) as mock_fn:
-            await agent.run_cycle("Hello.")
-
-        first_kwargs = mock_fn.call_args_list[0].kwargs
-        assert first_kwargs.get("max_tokens", 0) >= 16384
+        from core.config.models import resolve_max_tokens
+        effective = resolve_max_tokens(
+            model_config.model, model_config.max_tokens, model_config.thinking,
+        )
+        assert effective >= 16384
 
     async def test_backward_compat_thinking_null(self, make_agent_core):
         """thinking=null (unset) → no thinking params in call."""

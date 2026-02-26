@@ -83,7 +83,7 @@ class TestResolveThinkingEffort:
 
 
 class TestResolveMaxTokens:
-    def test_explicit_value_takes_priority(self):
+    def test_explicit_high_value_preserved(self):
         result = resolve_max_tokens("claude-sonnet-4-6", 32000, True)
         assert result == 32000
 
@@ -106,8 +106,13 @@ class TestResolveMaxTokens:
         assert result == 32000
 
     def test_explicit_8192_treated_as_default(self):
-        """When explicit value equals DEFAULT_MAX_TOKENS, pattern/thinking may override."""
+        """When explicit value equals DEFAULT_MAX_TOKENS, thinking may override."""
         result = resolve_max_tokens("claude-sonnet-4-6", 8192, True)
+        assert result == 16384
+
+    def test_thinking_raises_low_explicit(self):
+        """Thinking minimum floor raises values below 16384."""
+        result = resolve_max_tokens("claude-sonnet-4-6", 1024, True)
         assert result == 16384
 
 

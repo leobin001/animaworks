@@ -1016,19 +1016,18 @@ def resolve_max_tokens(
     """Resolve effective max_tokens.
 
     Priority:
-      1. Explicit value (status.json ``max_tokens``) — returned as-is
-      2. ``config.model_max_tokens`` pattern match
-      3. Thinking minimum (16384 when thinking enabled)
+      1. ``config.model_max_tokens`` pattern match (overrides all)
+      2. Thinking minimum floor (16384 when thinking enabled, raises low values)
+      3. Explicit value (status.json ``max_tokens``)
       4. DEFAULT_MAX_TOKENS (8192)
     """
-    if explicit is not None and explicit != DEFAULT_MAX_TOKENS:
-        return explicit
     matched = _match_model_max_tokens(model_name, config)
     if matched is not None:
         return matched
+    base = explicit if (explicit is not None and explicit != DEFAULT_MAX_TOKENS) else DEFAULT_MAX_TOKENS
     if thinking:
-        return max(_THINKING_MIN_MAX_TOKENS, DEFAULT_MAX_TOKENS)
-    return DEFAULT_MAX_TOKENS
+        return max(_THINKING_MIN_MAX_TOKENS, base)
+    return base
 
 
 # ---------------------------------------------------------------------------

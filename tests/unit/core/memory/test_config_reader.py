@@ -236,6 +236,7 @@ class TestReadModelConfig:
         mock_resolved.supervisor = None
         mock_resolved.speciality = None
         mock_resolved.thinking = None
+        mock_resolved.thinking_effort = None
         mock_resolved.llm_timeout = None
 
         mock_credential = MagicMock()
@@ -297,6 +298,7 @@ class TestReadModelConfig:
         mock_resolved.supervisor = None
         mock_resolved.speciality = None
         mock_resolved.thinking = None
+        mock_resolved.thinking_effort = None
         mock_resolved.llm_timeout = None
 
         mock_credential = MagicMock()
