@@ -75,16 +75,18 @@ class TestAgentSDKExecutor:
             executor = AgentSDKExecutor(model_config=model_config, anima_dir=anima_dir)
             assert executor._resolve_agent_sdk_model() == "claude-sonnet-4-6"
 
-    def test_build_env(self, model_config, anima_dir):
+    def test_build_env_api_direct(self, model_config, anima_dir):
+        """credential has api_key → API direct mode."""
         model_config.api_base_url = "https://custom.api"
         with patch_agent_sdk():
             from core.execution.agent_sdk import AgentSDKExecutor
             executor = AgentSDKExecutor(model_config=model_config, anima_dir=anima_dir)
             env = executor._build_env()
             assert env["ANIMAWORKS_ANIMA_DIR"] == str(anima_dir)
-            # A1 mode blocks ANTHROPIC_API_KEY leaking (sets to empty string)
-            assert env["ANTHROPIC_API_KEY"] == ""
+            assert env["ANTHROPIC_API_KEY"] == "sk-test"
             assert env["ANTHROPIC_BASE_URL"] == "https://custom.api"
+            assert "CLAUDE_CODE_USE_BEDROCK" not in env
+            assert "CLAUDE_CODE_USE_VERTEX" not in env
 
     def test_build_env_disables_skill_improvement(self, model_config, anima_dir):
         with patch_agent_sdk():
@@ -93,16 +95,80 @@ class TestAgentSDKExecutor:
             env = executor._build_env()
             assert env.get("CLAUDE_CODE_DISABLE_SKILL_IMPROVEMENT") == "true"
 
-    def test_build_env_no_api_key(self, anima_dir):
-        config = ModelConfig(model="test", api_key=None, api_key_env="NONEXISTENT_XYZ")
+    def test_build_env_max_plan(self, anima_dir):
+        """No api_key, no provider keys → Max plan (default)."""
+        config = ModelConfig(model="claude-sonnet-4-6", api_key=None, api_key_env="NONEXISTENT_XYZ")
         with patch_agent_sdk():
             from core.execution.agent_sdk import AgentSDKExecutor
             executor = AgentSDKExecutor(model_config=config, anima_dir=anima_dir)
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("NONEXISTENT_XYZ", None)
                 env = executor._build_env()
-                # A1 mode blocks ANTHROPIC_API_KEY leaking (sets to empty string)
                 assert env["ANTHROPIC_API_KEY"] == ""
+                assert "CLAUDE_CODE_USE_BEDROCK" not in env
+                assert "CLAUDE_CODE_USE_VERTEX" not in env
+
+    def test_build_env_bedrock(self, anima_dir):
+        """credential keys have AWS creds → Bedrock mode."""
+        config = ModelConfig(
+            model="claude-sonnet-4-6",
+            api_key=None,
+            api_key_env="NONEXISTENT_XYZ",
+            extra_keys={
+                "aws_access_key_id": "AKIA_TEST",
+                "aws_secret_access_key": "secret_test",
+                "aws_region_name": "us-east-1",
+            },
+        )
+        with patch_agent_sdk():
+            from core.execution.agent_sdk import AgentSDKExecutor
+            executor = AgentSDKExecutor(model_config=config, anima_dir=anima_dir)
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("NONEXISTENT_XYZ", None)
+                env = executor._build_env()
+                assert env["ANTHROPIC_API_KEY"] == ""
+                assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+                assert env["AWS_ACCESS_KEY_ID"] == "AKIA_TEST"
+                assert env["AWS_SECRET_ACCESS_KEY"] == "secret_test"
+                assert env["AWS_REGION"] == "us-east-1"
+                assert "CLAUDE_CODE_USE_VERTEX" not in env
+
+    def test_build_env_vertex(self, anima_dir):
+        """credential keys have Vertex creds → Vertex AI mode."""
+        config = ModelConfig(
+            model="claude-sonnet-4-6",
+            api_key=None,
+            api_key_env="NONEXISTENT_XYZ",
+            extra_keys={
+                "vertex_project": "my-gcp-project",
+                "vertex_location": "us-central1",
+            },
+        )
+        with patch_agent_sdk():
+            from core.execution.agent_sdk import AgentSDKExecutor
+            executor = AgentSDKExecutor(model_config=config, anima_dir=anima_dir)
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("NONEXISTENT_XYZ", None)
+                env = executor._build_env()
+                assert env["ANTHROPIC_API_KEY"] == ""
+                assert env["CLAUDE_CODE_USE_VERTEX"] == "1"
+                assert env["CLOUD_ML_PROJECT_ID"] == "my-gcp-project"
+                assert env["CLOUD_ML_REGION"] == "us-central1"
+                assert "CLAUDE_CODE_USE_BEDROCK" not in env
+
+    def test_build_env_api_key_takes_priority_over_aws_keys(self, anima_dir):
+        """api_key present alongside AWS keys → API direct wins."""
+        config = ModelConfig(
+            model="claude-sonnet-4-6",
+            api_key="sk-direct",
+            extra_keys={"aws_access_key_id": "AKIA_TEST"},
+        )
+        with patch_agent_sdk():
+            from core.execution.agent_sdk import AgentSDKExecutor
+            executor = AgentSDKExecutor(model_config=config, anima_dir=anima_dir)
+            env = executor._build_env()
+            assert env["ANTHROPIC_API_KEY"] == "sk-direct"
+            assert "CLAUDE_CODE_USE_BEDROCK" not in env
 
     async def test_execute_returns_text(self, model_config, anima_dir):
         with patch_agent_sdk(response_text="Hello from Agent SDK"):
