@@ -94,6 +94,7 @@ class AnimaDefaults(BaseModel):
     supervisor: str | None = None
     speciality: str | None = None
     thinking: bool | None = None  # Extended thinking (Bedrock: reasoning_effort, Ollama: think)
+    thinking_effort: str | None = None  # "low"/"medium"/"high"/"max" (default: "high")
     llm_timeout: int = 600  # default LLM API timeout (seconds)
 
 
@@ -315,6 +316,7 @@ class AnimaWorksConfig(BaseModel):
     credentials: dict[str, CredentialConfig] = {"anthropic": CredentialConfig()}
     model_modes: dict[str, str] = {}  # モデル名 → "S"/"A"/"B" (legacy: "A1"/"A2" も可)
     model_context_windows: dict[str, int] = {}  # モデル名パターン → コンテキストウィンドウサイズ
+    model_max_tokens: dict[str, int] = {}  # モデル名パターン → デフォルト max_tokens
     anima_defaults: AnimaDefaults = AnimaDefaults()
     animas: dict[str, AnimaModelConfig] = {}
     consolidation: ConsolidationConfig = ConsolidationConfig()
@@ -490,6 +492,7 @@ def _load_status_json(anima_dir: Path) -> dict[str, Any]:
         "max_tokens": "max_tokens",
         "fallback_model": "fallback_model",
         "thinking": "thinking",
+        "thinking_effort": "thinking_effort",
         "llm_timeout": "llm_timeout",
     }
     for status_key, config_key in field_mapping.items():
@@ -835,6 +838,7 @@ def load_model_config(anima_dir: Path) -> "ModelConfig":
         speciality=resolved.speciality,
         resolved_mode=mode,
         thinking=resolved.thinking,
+        thinking_effort=resolved.thinking_effort,
         llm_timeout=resolved.llm_timeout,
         extra_keys=credential.keys or {},
     )
@@ -973,6 +977,58 @@ def resolve_context_window(
                 return size
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# max_tokens resolution
+# ---------------------------------------------------------------------------
+
+DEFAULT_MAX_TOKENS: int = 8192
+_THINKING_MIN_MAX_TOKENS: int = 16384
+
+
+def _match_model_max_tokens(
+    model_name: str,
+    config: AnimaWorksConfig | None = None,
+) -> int | None:
+    """Match *model_name* against ``config.model_max_tokens`` pattern table."""
+    if config is None:
+        try:
+            config = load_config()
+        except Exception:
+            return None
+    table = config.model_max_tokens or {}
+    if not table:
+        return None
+    bare = model_name.split("/", 1)[-1] if "/" in model_name else model_name
+    for pattern, value in table.items():
+        if fnmatch.fnmatch(model_name, pattern) or fnmatch.fnmatch(bare, pattern):
+            return value
+    return None
+
+
+def resolve_max_tokens(
+    model_name: str,
+    explicit: int | None,
+    thinking: bool | None,
+    config: AnimaWorksConfig | None = None,
+) -> int:
+    """Resolve effective max_tokens.
+
+    Priority:
+      1. Explicit value (status.json ``max_tokens``) — returned as-is
+      2. ``config.model_max_tokens`` pattern match
+      3. Thinking minimum (16384 when thinking enabled)
+      4. DEFAULT_MAX_TOKENS (8192)
+    """
+    if explicit is not None and explicit != DEFAULT_MAX_TOKENS:
+        return explicit
+    matched = _match_model_max_tokens(model_name, config)
+    if matched is not None:
+        return matched
+    if thinking:
+        return max(_THINKING_MIN_MAX_TOKENS, DEFAULT_MAX_TOKENS)
+    return DEFAULT_MAX_TOKENS
 
 
 # ---------------------------------------------------------------------------

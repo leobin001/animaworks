@@ -81,6 +81,7 @@ class ModelConfig(BaseModel):
     speciality: str | None = None  # free-text specialisation
     resolved_mode: str | None = None  # "S"/"A"/"B" — resolved from config
     thinking: bool | None = None  # Extended thinking (Bedrock: reasoning_effort, Ollama: think param)
+    thinking_effort: str | None = None  # "low"/"medium"/"high"/"max" (default: "high")
     llm_timeout: int | None = None  # LLM API呼び出しタイムアウト（秒）
     extra_keys: dict[str, str] = {}  # provider-specific credential keys (e.g. api_version, vertex_project)
 

@@ -27,6 +27,32 @@ from core.memory.shortterm import ShortTermMemory
 from core.exceptions import StreamDisconnectedError  # noqa: F401 – re-export
 
 
+# ── Adaptive Thinking helpers ─────────────────────────────────
+
+_ADAPTIVE_MODELS = frozenset({"claude-opus-4-6", "claude-sonnet-4-6"})
+
+
+def is_adaptive_model(model: str) -> bool:
+    """Return True if *model* supports Anthropic adaptive thinking (4.6 series)."""
+    bare = model.split("/")[-1] if "/" in model else model
+    return bare in _ADAPTIVE_MODELS
+
+
+def is_anthropic_claude(model: str) -> bool:
+    """Return True if *model* is an Anthropic Claude model."""
+    bare = model.split("/")[-1] if "/" in model else model
+    return bare.startswith("claude-")
+
+
+def resolve_thinking_effort(model: str, effort: str | None) -> str:
+    """Resolve thinking effort, clamping ``"max"`` to ``"high"`` for non-Opus-4.6."""
+    resolved = effort or "high"
+    if resolved == "max":
+        bare = model.split("/")[-1] if "/" in model else model
+        if bare != "claude-opus-4-6":
+            return "high"
+    return resolved
+
 
 # ── Dynamic tool-record budget ───────────────────────────────
 
