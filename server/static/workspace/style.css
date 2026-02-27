@@ -632,6 +632,18 @@ html, body {
   white-space: pre;
 }
 
+/* ── Streaming Thinking Preview ────────────────────── */
+
+.thinking-inline-preview {
+  margin-bottom: 8px;
+  color: rgba(26, 26, 26, 0.48);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-style: italic;
+}
+
 /* ── Tool Indicator ────────────────────── */
 
 .tool-indicator {

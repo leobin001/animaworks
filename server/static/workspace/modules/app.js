@@ -811,10 +811,8 @@ function renderConvBubble(msg) {
   }
   const streamClass = msg.streaming ? " streaming" : "";
   let thinkingHtml = "";
-  if (msg.thinkingText) {
-    const thSummary = `Thinking (${msg.thinkingText.length} chars)`;
-    const thRendered = renderSimpleMarkdown(msg.thinkingText);
-    thinkingHtml = `<details class="thinking-block"><summary class="thinking-summary"><span class="thinking-icon">💭</span> ${escapeHtml(thSummary)}</summary><div class="thinking-content">${thRendered}</div></details>`;
+  if (msg.thinkingText && !msg.text) {
+    thinkingHtml = `<div class="thinking-inline-preview">${escapeHtml(msg.thinkingText)}</div>`;
   }
   let content = "";
   if (msg.text) {
@@ -944,19 +942,35 @@ async function resumeConversationStream(animaName) {
     const progress = await fetchStreamProgress(animaName, active.response_id);
     if (!progress) return;
 
-    // Show accumulated text in streaming bubble (thread-aware)
+    // Show accumulated text in streaming bubble (thread-aware).
+    // Reuse existing streaming bubble if present to avoid duplicates on re-open.
     const { activeThreadId, chatMessagesByThread } = getState();
     const threadId = activeThreadId || "default";
-    const streamingMsg = {
-      role: "assistant",
-      text: progress.full_text || "",
-      streaming: true,
-      activeTool: progress.active_tool || null,
-    };
     const current = chatMessagesByThread?.[animaName]?.[threadId] || [];
+    let streamingMsg = null;
+    if (current.length > 0) {
+      const last = current[current.length - 1];
+      if (last && last.role === "assistant" && last.streaming) {
+        streamingMsg = last;
+      }
+    }
+    if (!streamingMsg) {
+      streamingMsg = {
+        role: "assistant",
+        text: progress.full_text || "",
+        streaming: true,
+        activeTool: progress.active_tool || null,
+      };
+    } else {
+      streamingMsg.text = progress.full_text || streamingMsg.text || "";
+      streamingMsg.activeTool = progress.active_tool || streamingMsg.activeTool || null;
+      streamingMsg.streaming = true;
+    }
     const nextByThread = { ...chatMessagesByThread };
     if (!nextByThread[animaName]) nextByThread[animaName] = {};
-    nextByThread[animaName][threadId] = [...current, streamingMsg];
+    nextByThread[animaName][threadId] = streamingMsg === current[current.length - 1]
+      ? [...current]
+      : [...current, streamingMsg];
     setState({ chatMessagesByThread: nextByThread });
     renderConvMessages();
 
@@ -1491,25 +1505,23 @@ function updateStreamingBubble(msg) {
   const bubble = dom.convMessages.querySelector(".chat-bubble.assistant.streaming");
   if (!bubble) return;
 
-  let html = "";
-  if (msg.thinkingText) {
-    const open = msg.thinking ? " open" : "";
-    const summary = msg.thinking ? "Thinking..." : `Thinking (${msg.thinkingText.length} chars)`;
-    const thinkingRendered = renderSimpleMarkdown(msg.thinkingText);
-    html += `<details class="thinking-block"${open}><summary class="thinking-summary"><span class="thinking-icon">💭</span> ${escapeHtml(summary)}</summary><div class="thinking-content">${thinkingRendered}</div></details>`;
-  }
+  let mainHtml = "";
+  const thinkingHtml = (msg.thinkingText && !msg.text)
+    ? `<div class="thinking-inline-preview">${escapeHtml(msg.thinkingText)}</div>`
+    : "";
   if (msg.heartbeatRelay) {
-    html = '<div class="heartbeat-relay-indicator"><span class="tool-spinner"></span>ハートビート処理中...</div>';
+    mainHtml = '<div class="heartbeat-relay-indicator"><span class="tool-spinner"></span>ハートビート処理中...</div>';
     if (msg.heartbeatText) {
-      html += `<div class="heartbeat-relay-text">${escapeHtml(msg.heartbeatText)}</div>`;
+      mainHtml += `<div class="heartbeat-relay-text">${escapeHtml(msg.heartbeatText)}</div>`;
     }
   } else if (msg.afterHeartbeatRelay && !msg.text) {
-    html = '<div class="heartbeat-relay-indicator"><span class="tool-spinner"></span>応答を準備中...</div>';
+    mainHtml = '<div class="heartbeat-relay-indicator"><span class="tool-spinner"></span>応答を準備中...</div>';
   } else if (msg.text) {
-    html = renderSimpleMarkdown(msg.text);
+    mainHtml = renderSimpleMarkdown(msg.text);
   } else {
-    html = '<span class="cursor-blink"></span>';
+    mainHtml = '<span class="cursor-blink"></span>';
   }
+  let html = `${thinkingHtml}${mainHtml}`;
   if (msg.activeTool) {
     html += `<div class="tool-indicator"><span class="tool-spinner"></span>${escapeHtml(msg.activeTool)} を実行中...</div>`;
   }
