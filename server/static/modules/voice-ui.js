@@ -195,11 +195,8 @@ export function initVoiceUI(chatInputForm, animaName, callbacks) {
 
   function _toggleRecordingVAD() {
     if (!voiceActive || voiceManager.mode !== 'vad') return false;
-    if (voiceManager.isRecording) {
-      voiceManager.stopRecording();
-    } else {
-      voiceManager.startRecording();
-    }
+    // In AUTO(VAD), mic button should not manually start/stop recording.
+    // Recording is controlled only by VAD speech start/end callbacks.
     return true;
   }
 
