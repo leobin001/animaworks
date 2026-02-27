@@ -478,17 +478,17 @@
 
   .chat-add-conversation {
     width: 100%;
-    display: flex;
   }
 
-  .chat-add-conversation-icon {
-    flex-shrink: 0;
-  }
-
-  .chat-add-conversation-select {
+  .chat-add-conversation-btn {
     width: 100%;
-    min-width: 0;
-    max-width: none;
+  }
+
+  .chat-add-conversation-menu {
+    left: 0;
+    right: auto;
+    width: 100%;
+    max-height: 280px;
   }
 
   .chat-mobile-tabs {

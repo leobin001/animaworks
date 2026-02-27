@@ -45,34 +45,101 @@
 }
 
 .chat-add-conversation {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
+  position: relative;
   flex-shrink: 0;
 }
 
-.chat-add-conversation-icon {
+.chat-add-conversation-btn {
+  padding: 0.34rem 0.7rem;
+  font-size: 0.82rem;
+  border: 1px solid var(--aw-color-border-dark);
+  border-radius: 999px;
+  background: var(--aw-color-bg-secondary);
+  color: var(--aw-color-text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chat-add-conversation-btn:hover,
+.chat-add-conversation-btn:active {
+  background: var(--aw-color-bg-hover);
+}
+
+.chat-add-conversation-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  width: min(360px, 68vw);
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--aw-color-border-medium);
+  border-radius: 12px;
+  background: var(--aw-color-bg-primary);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
+  padding: 0.35rem;
+  z-index: 10;
+  display: none;
+}
+
+.chat-add-conversation.open .chat-add-conversation-menu {
+  display: block;
+}
+
+.chat-add-conversation-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  padding: 0.42rem 0.48rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--aw-color-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-add-conversation-item:hover,
+.chat-add-conversation-item:active {
+  background: var(--aw-color-bg-hover);
+}
+
+.chat-add-conversation-item.disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.chat-add-conversation-name {
+  font-size: 0.84rem;
+  line-height: 1.25;
+}
+
+.add-conversation-avatar {
   width: 16px;
   height: 16px;
   border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.add-conversation-avatar-img {
+  object-fit: cover;
+  border: 1px solid color-mix(in srgb, var(--aw-color-avatar-border) 80%, transparent 20%);
+}
+
+.add-conversation-avatar-initial {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.72rem;
+  font-size: 0.56rem;
   font-weight: 700;
   color: var(--aw-color-bg-primary);
-  background-color: var(--aw-color-accent);
-  background-size: cover;
-  background-position: center;
-  border: 1px solid color-mix(in srgb, var(--aw-color-accent) 55%, var(--aw-color-border-dark) 45%);
+  background: var(--aw-color-accent);
 }
 
-.chat-add-conversation-select {
-  position: static;
-  min-width: 180px;
-  width: min(220px, 28vw);
-  max-width: 220px;
-  box-shadow: none;
+.chat-add-conversation-empty {
+  color: var(--aw-color-text-muted);
+  font-size: 0.82rem;
+  padding: 0.45rem 0.55rem;
 }
 
 .anima-tabs {

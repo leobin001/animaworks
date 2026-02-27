@@ -28,6 +28,7 @@ let _isChatStreaming = false;
 let _selectedThreadId = "default";
 let _threads = {};  // { [animaName]: [{ id, label, unread }] }
 let _activeThreadByAnima = {};  // { [animaName]: threadId }
+let _animaLastAccess = {}; // { [animaName]: epoch_ms }
 const _HISTORY_PAGE_SIZE = 50;
 const _TOOL_RESULT_TRUNCATE = 500;
 const _THREAD_VISIBLE_NON_DEFAULT = 5;
@@ -154,7 +155,7 @@ async function _ensureAnimaTabAvatar(name) {
     _animaTabAvatarUrls[name] = found;
     delete _animaTabAvatarLoading[name];
     _renderAnimaTabs();
-    if (name === _selectedAnima) _renderAddConversationIcon();
+    _renderAddConversationMenu();
   })();
   return _animaTabAvatarLoading[name];
 }
@@ -204,6 +205,7 @@ function _serializeChatUiState() {
       name: tab.name,
       unread_star: Boolean(tab.unreadStar),
     })),
+    anima_last_access: { ..._animaLastAccess },
     thread_state: threadState,
   };
 }
@@ -253,6 +255,7 @@ export function render(container) {
   _selectedThreadId = "default";
   _threads = {};
   _activeThreadByAnima = {};
+  _animaLastAccess = {};
   _animaDetail = null;
   _activeRightTab = "state";
   _activeMemoryTab = "episodes";
@@ -272,10 +275,8 @@ export function render(container) {
         <div class="chat-anima-tabs-header">
           <div class="anima-tabs" id="chatAnimaTabs"></div>
           <div class="chat-add-conversation" id="chatAddConversationArea">
-            <span id="chatAddConversationIcon" class="chat-add-conversation-icon" aria-hidden="true">+</span>
-            <select id="chatAddConversationSelect" class="anima-dropdown chat-add-conversation-select" aria-label="${t("chat.anima_select")}">
-              <option value="" selected>${t("chat.anima_select")}</option>
-            </select>
+            <button type="button" id="chatAddConversationBtn" class="chat-add-conversation-btn">${t("chat.anima_select")}</button>
+            <div id="chatAddConversationMenu" class="chat-add-conversation-menu" role="listbox" aria-label="${t("chat.anima_select")}"></div>
           </div>
         </div>
 
@@ -404,6 +405,7 @@ export function destroy() {
   _selectedThreadId = "default";
   _threads = {};
   _activeThreadByAnima = {};
+  _animaLastAccess = {};
   _animaDetail = null;
   _imageInputManager = null;
   _animaTabAvatarUrls = {};
@@ -425,12 +427,22 @@ function _bindEvents() {
   _boundListeners.push({ el: document, event: "keydown", handler: _onBustupEscape });
 
   // Add conversation picker
-  _addListener("chatAddConversationSelect", "change", (e) => {
-    const name = e.target.value;
-    if (name) _openOrSelectAnima(name);
-    e.target.value = "";
-    _renderAddConversationIcon();
+  _addListener("chatAddConversationBtn", "click", (e) => {
+    e.stopPropagation();
+    const area = _$("chatAddConversationArea");
+    if (!area) return;
+    const nextOpen = !area.classList.contains("open");
+    area.classList.toggle("open", nextOpen);
+    if (nextOpen) _renderAddConversationMenu();
   });
+  const closeAddConversationMenu = (e) => {
+    const area = _$("chatAddConversationArea");
+    if (!area || !area.classList.contains("open")) return;
+    if (e.target instanceof Element && area.contains(e.target)) return;
+    area.classList.remove("open");
+  };
+  document.addEventListener("pointerdown", closeAddConversationMenu);
+  _boundListeners.push({ el: document, event: "pointerdown", handler: closeAddConversationMenu });
 
   // New thread button
   _addListener("chatNewThreadBtn", "click", () => _createNewThread());
@@ -565,8 +577,7 @@ async function _loadAnimas() {
     ]);
     _animas = animas || [];
     _restoreChatUiState(uiState);
-    _renderAddConversationSelect();
-    _renderAddConversationIcon();
+    _renderAddConversationMenu();
     _renderAnimaTabs();
     if (_animas.length > 0 && !_selectedAnima && !_isChatStreaming) {
       const firstTab = _animaTabs[0]?.name;
@@ -586,10 +597,14 @@ function _restoreChatUiState(uiState) {
   _animaTabs = [];
   _threads = {};
   _activeThreadByAnima = {};
+  _animaLastAccess = {};
 
   const tabs = Array.isArray(uiState.anima_tabs) ? uiState.anima_tabs : [];
   const threadState = uiState.thread_state && typeof uiState.thread_state === "object"
     ? uiState.thread_state
+    : {};
+  const accessState = uiState.anima_last_access && typeof uiState.anima_last_access === "object"
+    ? uiState.anima_last_access
     : {};
 
   for (const tab of tabs) {
@@ -620,6 +635,14 @@ function _restoreChatUiState(uiState) {
     _refreshAnimaUnread(name);
   }
 
+  for (const [name, ts] of Object.entries(accessState)) {
+    if (!known.has(name)) continue;
+    const value = Number(ts);
+    if (Number.isFinite(value) && value > 0) {
+      _animaLastAccess[name] = value;
+    }
+  }
+
   const active = uiState.active_anima;
   if (typeof active === "string" && _isTabOpen(active)) {
     _selectedAnima = active;
@@ -627,45 +650,57 @@ function _restoreChatUiState(uiState) {
   }
 }
 
-function _renderAddConversationSelect() {
-  const select = _$("chatAddConversationSelect");
-  if (!select) return;
-
-  let html = `<option value="">${t("chat.anima_select")}</option>`;
-  for (const p of _animas) {
-    const openLabel = _isTabOpen(p.name) ? " · 表示中" : "";
-    if (p.status === "bootstrapping" || p.bootstrapping) {
-      html += `<option value="${escapeHtml(p.name)}" disabled>\u23F3 ${escapeHtml(p.name)} (${escapeHtml(p.status || "bootstrapping")})</option>`;
-    } else if (p.status === "not_found" || p.status === "stopped") {
-      html += `<option value="${escapeHtml(p.name)}">\uD83D\uDCA4 ${escapeHtml(p.name)} (${escapeHtml(p.status || "stopped")})${openLabel}</option>`;
-    } else {
-      const statusLabel = p.status ? ` (${p.status})` : "";
-      html += `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}${statusLabel}${openLabel}</option>`;
-    }
+function _buildAddConversationAvatar(name) {
+  const initial = escapeHtml((name || "").charAt(0).toUpperCase() || "?");
+  if (_isBusinessTheme()) {
+    return `<span class="add-conversation-avatar add-conversation-avatar-initial">${initial}</span>`;
   }
-  select.innerHTML = html;
+  const url = _animaTabAvatarUrls[name];
+  if (url) {
+    return `<img class="add-conversation-avatar add-conversation-avatar-img" src="${escapeHtml(url)}" alt="${escapeHtml(name)}">`;
+  }
+  return `<span class="add-conversation-avatar add-conversation-avatar-initial">${initial}</span>`;
 }
 
-function _renderAddConversationIcon() {
-  const icon = _$("chatAddConversationIcon");
-  if (!icon) return;
-  if (_isBusinessTheme() || !_selectedAnima) {
-    icon.textContent = "+";
-    icon.classList.remove("has-image");
-    icon.removeAttribute("style");
-    return;
+function _renderAddConversationMenu() {
+  const menu = _$("chatAddConversationMenu");
+  if (!menu) return;
+
+  const sortedAnimas = [..._animas].sort((a, b) => {
+    const at = Number(_animaLastAccess[a.name] || 0);
+    const bt = Number(_animaLastAccess[b.name] || 0);
+    if (bt !== at) return bt - at;
+    return String(a.name || "").localeCompare(String(b.name || ""), "ja");
+  });
+
+  let html = "";
+  for (const p of sortedAnimas) {
+    const statusLabel = p.status ? ` (${p.status})` : "";
+    const openLabel = _isTabOpen(p.name) ? " · 表示中" : "";
+    const disabled = p.status === "bootstrapping" || p.bootstrapping;
+    const sleepBadge = p.status === "not_found" || p.status === "stopped" ? "\uD83D\uDCA4 " : "";
+    const avatar = _buildAddConversationAvatar(p.name);
+    if (disabled) {
+      html += `<div class="chat-add-conversation-item disabled">${avatar}<span class="chat-add-conversation-name">\u23F3 ${escapeHtml(p.name)}${statusLabel}</span></div>`;
+    } else {
+      html += `<button type="button" class="chat-add-conversation-item" data-anima="${escapeHtml(p.name)}">${avatar}<span class="chat-add-conversation-name">${sleepBadge}${escapeHtml(p.name)}${statusLabel}${openLabel}</span></button>`;
+    }
   }
-  const url = _animaTabAvatarUrls[_selectedAnima];
-  if (url) {
-    icon.textContent = "";
-    icon.classList.add("has-image");
-    icon.style.backgroundImage = `url("${url}")`;
-    return;
+  menu.innerHTML = html || `<div class="chat-add-conversation-empty">${t("chat.anima_select_first")}</div>`;
+
+  for (const p of sortedAnimas) {
+    _ensureAnimaTabAvatar(p.name);
   }
-  const initial = escapeHtml((_selectedAnima || "").charAt(0).toUpperCase() || "+");
-  icon.textContent = initial;
-  icon.classList.remove("has-image");
-  icon.style.backgroundImage = "";
+
+  menu.querySelectorAll(".chat-add-conversation-item[data-anima]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      const name = e.currentTarget?.dataset?.anima;
+      if (!name) return;
+      _openOrSelectAnima(name);
+      const area = _$("chatAddConversationArea");
+      if (area) area.classList.remove("open");
+    });
+  });
 }
 
 async function _selectAnima(name) {
@@ -677,6 +712,7 @@ async function _selectAnima(name) {
   }
 
   _selectedAnima = name;
+  _animaLastAccess[name] = Date.now();
   _bustupUrl = null;
   _pendingQueue = [];
   _hidePendingIndicator();
@@ -696,9 +732,8 @@ async function _selectAnima(name) {
   }
   _refreshAnimaUnread(name);
 
-  _renderAddConversationSelect();
-  _ensureAnimaTabAvatar(name).then(() => _renderAddConversationIcon()).catch(() => {});
-  _renderAddConversationIcon();
+  _renderAddConversationMenu();
+  _ensureAnimaTabAvatar(name).catch(() => {});
   _renderAnimaTabs();
 
   const input = _$("chatPageInput");
@@ -796,8 +831,7 @@ function _closeAnimaTab(name) {
       _openOrSelectAnima(next.name);
     }
   } else {
-    _renderAddConversationSelect();
-    _renderAddConversationIcon();
+    _renderAddConversationMenu();
     _renderAnimaTabs();
   }
   _scheduleSaveChatUiState();
