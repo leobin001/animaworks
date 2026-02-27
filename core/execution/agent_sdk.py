@@ -1453,8 +1453,6 @@ class AgentSDKExecutor(BaseExecutor):
                             yield {"type": "thinking_end"}
 
                 elif isinstance(message, AssistantMessage):
-                    if not got_stream_event:
-                        continue
                     message_count += 1
                     for block in message.content:
                         if isinstance(block, TextBlock):
@@ -1473,8 +1471,6 @@ class AgentSDKExecutor(BaseExecutor):
                                 }
 
                 elif isinstance(message, UserMessage):
-                    if not got_stream_event:
-                        continue
                     if isinstance(message.content, list):
                         for block in message.content:
                             if isinstance(block, ToolResultBlock):
