@@ -277,10 +277,9 @@
   }
 
   .chat-send-btn {
-    min-height: 44px;
-    min-width: 44px;
     width: 44px;
-    padding: 8px 0;
+    height: 44px;
+    padding: 0;
   }
 
   .chat-input {
