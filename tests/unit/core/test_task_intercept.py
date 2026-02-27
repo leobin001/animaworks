@@ -64,7 +64,7 @@ class TestInterceptTaskToPending:
         assert task_desc["description"] == "Quick background check"
 
     def test_logs_activity(self, tmp_path: Path) -> None:
-        """Tool use is logged with blocked=True."""
+        """Tool use is logged as intercept info (not blocked)."""
         from core.execution.agent_sdk import _intercept_task_to_pending
 
         anima_dir = tmp_path / "animas" / "test"
@@ -77,8 +77,7 @@ class TestInterceptTaskToPending:
 
         mock_log.assert_called_once()
         _, kwargs = mock_log.call_args
-        assert kwargs["blocked"] is True
-        assert "Intercepted" in kwargs["block_reason"]
+        assert kwargs["blocked"] is False
 
     def test_json_compatible_with_execute_llm_task(self, tmp_path: Path) -> None:
         """Generated JSON has all fields expected by PendingTaskExecutor._execute_llm_task."""
@@ -170,7 +169,7 @@ class TestPreToolHookTaskBranch:
         assert output.get("permissionDecision") == "deny"
         reason = output.get("permissionDecisionReason", "")
         assert "Task accepted" in reason
-        assert "background self" in reason
+        assert "INTERCEPT_OK" in reason
 
     async def test_task_tool_creates_pending_file(self, hook, tmp_path: Path) -> None:
         """Task intercept should write a JSON file to state/pending/."""
@@ -232,3 +231,29 @@ class TestPreToolHookTaskBranch:
 
         output = result.get("hookSpecificOutput", {})
         assert output.get("permissionDecision") != "deny"
+
+    async def test_task_output_for_intercepted_task(self, hook) -> None:
+        """TaskOutput for intercepted task IDs returns expected intercept message."""
+        task_input = {
+            "tool_name": "Task",
+            "tool_input": {"description": "bg", "prompt": "run in background"},
+        }
+        with patch("core.execution.agent_sdk._log_tool_use"):
+            task_result = await hook(task_input, "tool-id-task", {})
+
+        reason = task_result.get("hookSpecificOutput", {}).get(
+            "permissionDecisionReason", "",
+        )
+        assert "task_id:" in reason
+        task_id = reason.split("task_id:", 1)[1].split(")")[0].strip()
+
+        out_input = {
+            "tool_name": "TaskOutput",
+            "tool_input": {"task_id": task_id, "block": False, "timeout": 5000},
+        }
+        with patch("core.execution.agent_sdk._log_tool_use"):
+            out_result = await hook(out_input, "tool-id-out", {})
+
+        out = out_result.get("hookSpecificOutput", {})
+        assert out.get("permissionDecision") == "deny"
+        assert "INTERCEPT_OK" in out.get("permissionDecisionReason", "")

@@ -537,8 +537,7 @@ def _intercept_task_to_pending(
 
     _log_tool_use(
         anima_dir, "Task", tool_input, tool_use_id=tool_use_id,
-        blocked=True,
-        block_reason=f"Intercepted → pending LLM task {task_id}",
+        blocked=False,
     )
 
     logger.info(
@@ -575,6 +574,7 @@ def _build_pre_tool_hook(
 
     # Cache subordinate paths once at hook build time
     _sub_activity_dirs, _sub_mgmt_files = _cache_subordinate_paths(anima_dir)
+    intercepted_task_ids: set[str] = set()
 
     async def _pre_tool_hook(
         input_data: HookInput,
@@ -617,6 +617,7 @@ def _build_pre_tool_hook(
             task_id = _intercept_task_to_pending(
                 anima_dir, tool_input, tool_use_id,
             )
+            intercepted_task_ids.add(task_id)
             if on_task_intercepted is not None:
                 try:
                     on_task_intercepted()
@@ -627,14 +628,37 @@ def _build_pre_tool_hook(
                     hookEventName="PreToolUse",
                     permissionDecision="deny",
                     permissionDecisionReason=(
-                        f"Task accepted (task_id: {task_id}). "
-                        f"Your background self (separate session with your identity) "
-                        f"will execute this shortly. "
-                        f"You will be notified upon completion. "
+                        f"INTERCEPT_OK: Task accepted (task_id: {task_id}). "
+                        f"This task was redirected to state/pending and will run in "
+                        f"your background task executor shortly. "
+                        f"Do not call TaskOutput for this task_id in this session. "
                         f"Continue the conversation now."
                     ),
                 )
             )
+
+        # TaskOutput for intercepted Task is not backed by SDK task IDs.
+        if tool_name == "TaskOutput":
+            task_id = str(tool_input.get("task_id", "")).strip()
+            if task_id and task_id in intercepted_task_ids:
+                _log_tool_use(
+                    anima_dir,
+                    "TaskOutput",
+                    tool_input,
+                    tool_use_id=tool_use_id,
+                    blocked=False,
+                )
+                return SyncHookJSONOutput(
+                    hookSpecificOutput=PreToolUseHookSpecificOutput(
+                        hookEventName="PreToolUse",
+                        permissionDecision="deny",
+                        permissionDecisionReason=(
+                            f"INTERCEPT_OK: task_id {task_id} is managed by "
+                            f"PendingTaskExecutor (not SDK TaskOutput). "
+                            f"Treat this as expected and continue."
+                        ),
+                    )
+                )
 
         # Write / Edit: check file path
         if tool_name in ("Write", "Edit"):
