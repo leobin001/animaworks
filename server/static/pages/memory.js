@@ -9,6 +9,15 @@ let _viewMode = "list"; // "list" | "content"
 let _container = null;
 let _animas = [];
 
+function _extractStatsCount(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value && typeof value === "object") {
+    const count = value.count;
+    if (typeof count === "number" && Number.isFinite(count)) return count;
+  }
+  return 0;
+}
+
 export function render(container) {
   _container = container;
   _selectedAnima = null;
@@ -109,9 +118,9 @@ async function _loadStats() {
   // Try memory stats endpoint first
   try {
     const stats = await api(`/api/animas/${encodeURIComponent(_selectedAnima)}/memory/stats`);
-    epCount = stats.episodes ?? 0;
-    knCount = stats.knowledge ?? 0;
-    prCount = stats.procedures ?? 0;
+    epCount = _extractStatsCount(stats.episodes);
+    knCount = _extractStatsCount(stats.knowledge);
+    prCount = _extractStatsCount(stats.procedures);
   } catch {
     // Fallback: count from file list endpoints
     try {

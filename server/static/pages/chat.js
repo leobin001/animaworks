@@ -40,6 +40,10 @@ let _chatUiStateSaveTimer = null;
 let _animaTabAvatarUrls = {}; // { [animaName]: string | null }
 let _animaTabAvatarLoading = {}; // { [animaName]: Promise<void> }
 
+function _chatInputMaxHeight() {
+  return window.matchMedia("(max-width: 768px)").matches ? 140 : 260;
+}
+
 // ── Chat Draft Persistence ───────────────────
 
 function _getDraftKey(animaName) {
@@ -493,7 +497,7 @@ function _bindEvents() {
     const el = _$("chatPageInput");
     if (el) {
       el.style.height = "auto";
-      el.style.height = Math.min(el.scrollHeight, 200) + "px";
+      el.style.height = Math.min(el.scrollHeight, _chatInputMaxHeight()) + "px";
       _saveDraft(_selectedAnima, el.value || "");
     }
     _updateSendButton();
@@ -743,7 +747,7 @@ async function _selectAnima(name) {
   if (input) {
     input.value = _loadDraft(name);
     input.style.height = "auto";
-    input.style.height = Math.min(input.scrollHeight, 200) + "px";
+    input.style.height = Math.min(input.scrollHeight, _chatInputMaxHeight()) + "px";
   }
   _updateSendButton();
 
@@ -1855,7 +1859,7 @@ function _showPendingIndicator() {
       const removed = _pendingQueue.splice(idx, 1)[0];
       if (removed) {
         const input = _$("chatPageInput");
-        if (input) { input.value = removed.text; input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 200) + "px"; input.focus(); }
+        if (input) { input.value = removed.text; input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, _chatInputMaxHeight()) + "px"; input.focus(); }
       }
       _showPendingIndicator();
       _updateSendButton();

@@ -499,13 +499,16 @@
 /* ── Textarea + Buttons Container ──────────── */
 
 .chat-input-wrap {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
   border: 1px solid var(--aw-color-border-medium);
   border-radius: 12px;
   background: var(--aw-color-bg-primary);
   transition: border-color 0.15s;
   overflow: visible;
+  padding: 8px;
 }
 
 .chat-input-wrap:focus-within {
@@ -517,17 +520,17 @@
 }
 
 .chat-input {
-  flex: 1;
-  padding: 10px 14px 4px;
+  width: 100%;
+  padding: 12px 14px;
   border: none;
   background: transparent;
-  font-size: 0.92rem;
+  font-size: 0.95rem;
   font-family: inherit;
   outline: none;
   resize: none;
   overflow-y: auto;
-  min-height: 36px;
-  max-height: 200px;
+  min-height: 112px;
+  max-height: 260px;
   line-height: 1.5;
 }
 
@@ -536,17 +539,37 @@
 }
 
 .chat-input-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 34px);
+  grid-auto-rows: 34px;
+  gap: 8px;
+  justify-content: center;
+  align-content: center;
+  padding: 0;
+  min-height: 0;
+}
+
+.chat-input-actions .voice-controls {
   display: flex;
-  gap: 4px;
-  justify-content: flex-end;
   align-items: center;
-  padding: 2px 6px 4px;
-  min-height: 36px;
+  justify-content: center;
+  gap: 0;
+  margin-right: 0;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+}
+
+.chat-input-actions .voice-mic-btn {
+  width: 34px;
+  height: 34px;
+  border-width: 1px;
 }
 
 .chat-send-btn {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -679,8 +702,8 @@
 
 /* Queue add button */
 .chat-queue-btn {
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -977,8 +1000,8 @@
 }
 
 .chat-attach-btn {
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
   border: 1px solid var(--aw-color-border, #ddd);
   border-radius: 50%;
   background: transparent;
