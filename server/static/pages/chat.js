@@ -81,18 +81,20 @@ export function render(container) {
             </div>
             <div id="chatPagePendingList"></div>
           </div>
-          <div class="chat-input-row">
+          <div class="chat-input-wrap">
             <textarea
               id="chatPageInput"
               class="chat-input"
-              placeholder="メッセージを入力... (Ctrl+Enter で送信, Alt+Enter でキュー追加)"
+              placeholder="メッセージを入力... (Ctrl+Enter で送信, Alt+Enter でキュー)"
               autocomplete="off"
               rows="1"
               disabled
             ></textarea>
-            <button type="button" class="chat-attach-btn" id="chatPageAttachBtn" title="画像を添付">+</button>
-            <button type="button" class="chat-queue-btn" id="chatPageQueueBtn" disabled title="キューに追加 (Alt+Enter)">↓</button>
-            <button type="submit" class="chat-send-btn" id="chatPageSendBtn" disabled>↑</button>
+            <div class="chat-input-actions">
+              <button type="button" class="chat-attach-btn" id="chatPageAttachBtn" title="画像を添付">+</button>
+              <button type="button" class="chat-queue-btn" id="chatPageQueueBtn" disabled title="キューに追加 (Alt+Enter)">↓</button>
+              <button type="submit" class="chat-send-btn" id="chatPageSendBtn" disabled>↑</button>
+            </div>
           </div>
           <input type="file" id="chatPageFileInput" accept="image/jpeg,image/png,image/gif,image/webp" multiple style="display:none" />
         </form>

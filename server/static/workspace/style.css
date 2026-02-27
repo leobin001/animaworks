@@ -716,8 +716,8 @@ html, body {
 }
 
 .chat-send-btn {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -727,11 +727,10 @@ html, body {
   border: none;
   border-radius: 50%;
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 0.95rem;
   cursor: pointer;
   transition: background 0.15s;
   flex-shrink: 0;
-  align-self: flex-end;
 }
 
 .chat-send-btn:hover {
@@ -1188,24 +1187,34 @@ html, body {
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
 }
 
+/* ── Textarea + Buttons Container (workspace) ── */
+
+.ws-conv-input-area .chat-input-wrap {
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.ws-conv-input-area .chat-input-wrap:focus-within {
+  border-color: #2563eb;
+}
+
 .ws-conv-input {
   flex: 1;
-  padding: 10px 14px;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  background: #fff;
+  padding: 10px 14px 4px;
+  border: none;
+  background: transparent;
   color: #1a1a1a;
   font-family: inherit;
   font-size: 0.9rem;
   resize: none;
   outline: none;
-  min-height: 40px;
+  min-height: 36px;
   max-height: 120px;
-  transition: border-color 0.15s;
-}
-
-.ws-conv-input:focus {
-  border-color: #2563eb;
 }
 
 .ws-conv-input::placeholder {
@@ -1213,13 +1222,12 @@ html, body {
 }
 
 .ws-conv-input:disabled {
-  background: #f9f9f9;
   color: #aaa;
 }
 
 .ws-conv-send {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -1229,11 +1237,18 @@ html, body {
   border: none;
   border-radius: 50%;
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 0.95rem;
   cursor: pointer;
   transition: background 0.15s;
   flex-shrink: 0;
-  align-self: flex-end;
+}
+
+.chat-input-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 4px 6px 6px;
 }
 
 .ws-conv-send:hover {
@@ -2036,12 +2051,17 @@ html, body {
     max-width: 85%;
   }
 
-  /* Tap targets: minimum 44px */
+  /* Tap targets: minimum 40px */
   .chat-send-btn,
   .ws-conv-send {
-    width: 44px;
-    height: 44px;
-    padding: 0;
+    width: 40px;
+    height: 40px;
+  }
+
+  .chat-queue-btn,
+  .chat-attach-btn {
+    width: 36px;
+    height: 36px;
   }
 
   .right-tab {
@@ -2430,25 +2450,23 @@ html, body {
 }
 
 .chat-attach-btn {
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   border: 1px solid #ddd;
-  border-radius: 8px;
-  background: #fff;
-  font-size: 1.2rem;
+  border-radius: 50%;
+  background: transparent;
+  font-size: 1rem;
   font-weight: 600;
-  color: #666;
+  color: #999;
   cursor: pointer;
   flex-shrink: 0;
-  align-self: flex-end;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: all 0.15s;
 }
 
 .chat-attach-btn:hover {
-  background: #f3f4f6;
   color: #2563eb;
   border-color: #2563eb;
 }
