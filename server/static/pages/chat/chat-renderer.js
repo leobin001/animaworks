@@ -317,21 +317,41 @@ export function createChatRenderer(ctx) {
       if (!conv || !Array.isArray(conv.sessions)) return;
 
       if (!state.historyState[name]) state.historyState[name] = {};
-      const prev = state.historyState[name][tid] || { sessions: [], hasMore: false, nextBefore: null, loading: false };
-      const changed = JSON.stringify(prev.sessions || []) !== JSON.stringify(conv.sessions || []);
+      const prev = state.historyState[name][tid];
 
-      state.historyState[name][tid] = {
-        sessions: conv.sessions, hasMore: conv.has_more || false,
-        nextBefore: conv.next_before || null, loading: false,
-      };
-
-      if (changed) {
-        const messagesEl = $("chatPageMessages");
-        const shouldStick = messagesEl
-          ? (messagesEl.scrollHeight - (messagesEl.scrollTop + messagesEl.clientHeight)) <= 80
-          : true;
-        renderChat(shouldStick);
+      if (!prev || prev.sessions.length === 0) {
+        state.historyState[name][tid] = {
+          sessions: conv.sessions, hasMore: conv.has_more || false,
+          nextBefore: conv.next_before || null, loading: false,
+        };
+        renderChat(true);
+        return;
       }
+
+      if (prev.loading) return;
+
+      const pollOldestStart = conv.sessions[0]?.session_start || "";
+      const olderSessions = pollOldestStart
+        ? prev.sessions.filter(s => s.session_start && s.session_start < pollOldestStart)
+        : [];
+      const currentPolledPart = pollOldestStart
+        ? prev.sessions.filter(s => !s.session_start || s.session_start >= pollOldestStart)
+        : prev.sessions;
+      const changed = JSON.stringify(currentPolledPart) !== JSON.stringify(conv.sessions);
+      if (!changed) return;
+
+      const merged = [...olderSessions, ...conv.sessions];
+      prev.sessions = merged;
+      if (olderSessions.length === 0) {
+        prev.hasMore = conv.has_more || false;
+        prev.nextBefore = conv.next_before || null;
+      }
+
+      const messagesEl = $("chatPageMessages");
+      const shouldStick = messagesEl
+        ? (messagesEl.scrollHeight - (messagesEl.scrollTop + messagesEl.clientHeight)) <= 80
+        : true;
+      renderChat(shouldStick);
     } finally {
       state.chatPollingInFlight = false;
     }
