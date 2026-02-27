@@ -1326,8 +1326,8 @@ html, body {
 }
 
 .ws-conv-send {
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -1345,8 +1345,8 @@ html, body {
 
 .chat-input-actions {
   display: grid;
-  grid-template-columns: repeat(2, 40px);
-  grid-auto-rows: 40px;
+  grid-template-columns: repeat(2, 34px);
+  grid-auto-rows: 34px;
   gap: 8px;
   justify-content: center;
   align-content: center;
@@ -1358,15 +1358,15 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  min-width: 40px;
-  min-height: 40px;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
 }
 
 .ws-conv-input-area .voice-mic-btn {
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   border-width: 1px;
 }
 
@@ -1496,8 +1496,8 @@ html, body {
 }
 
 .chat-queue-btn {
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -2173,14 +2173,14 @@ html, body {
   /* Tap targets: minimum 40px */
   .chat-send-btn,
   .ws-conv-send {
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
   }
 
   .chat-queue-btn,
   .chat-attach-btn {
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
   }
 
   .right-tab {
@@ -2569,8 +2569,8 @@ html, body {
 }
 
 .chat-attach-btn {
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   border: 1px solid #ddd;
   border-radius: 50%;
   background: transparent;
