@@ -12,7 +12,7 @@ sub-modules for manageability:
 - ``_agent_prompt_log``  -- prompt-log constants & helpers
 - ``_agent_executor``    -- ExecutorFactoryMixin
 - ``_agent_priming``     -- PrimingMixin
-- ``_agent_cycle``       -- CycleMixin
+- ``_agent_cycle``       -- CycleMixin (Streaming executor (S / A / all modes))
 """
 
 import asyncio
