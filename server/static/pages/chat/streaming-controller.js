@@ -247,6 +247,22 @@ export function createStreamingController(ctx) {
     ctx.controllers.activity.addLocalActivity("chat", name, `${t("chat.user_prefix")} ${message}`);
 
     try {
+      const finalizeStreamError = (errorMsg, recoveredText = "") => {
+        const recovered = recoveredText || "";
+        if (recovered && recovered.length > (streamingMsg.text || "").length) {
+          streamingMsg.text = recovered;
+        }
+        const errLine = `${t("chat.error_prefix")} ${errorMsg}`;
+        if (!streamingMsg.text) {
+          streamingMsg.text = errLine;
+        } else if (!streamingMsg.text.includes(errorMsg)) {
+          streamingMsg.text += `\n${errLine}`;
+        }
+        streamingMsg.streaming = false;
+        streamingMsg.activeTool = null;
+        ctx.controllers.renderer.renderChat();
+      };
+
       let sendSucceeded = false;
       const currentUser = localStorage.getItem("animaworks_user") || "human";
       const bodyObj = { message, from_person: currentUser, thread_id: tid };
@@ -287,9 +303,27 @@ export function createStreamingController(ctx) {
         onThinkingEnd: () => { if (!streamingMsg.streaming) return; streamingMsg.thinking = false; ctx.controllers.renderer.renderStreamingBubble(streamingMsg); },
         onError: ({ message: errorMsg }) => {
           logger.debug(`onError: ${errorMsg}`);
-          streamingMsg.text += `\n${t("chat.error_prefix")} ${errorMsg}`;
-          streamingMsg.streaming = false;
-          ctx.controllers.renderer.renderChat();
+          // If we received no deltas, recover latest server-side stream progress before showing the error.
+          if (!streamingMsg.text) {
+            void (async () => {
+              let recoveredText = "";
+              try {
+                const active = await fetchActiveStream(name);
+                if (active?.response_id) {
+                  const progress = await fetchStreamProgress(name, active.response_id);
+                  recoveredText = progress?.full_text || "";
+                }
+              } catch (progressErr) {
+                logger.debug("Failed to load stream progress on error", {
+                  anima: name,
+                  error: progressErr?.message || String(progressErr),
+                });
+              }
+              finalizeStreamError(errorMsg, recoveredText);
+            })();
+            return;
+          }
+          finalizeStreamError(errorMsg);
         },
         onDone: ({ summary, images: doneImages }) => {
           const text = summary || streamingMsg.text;
@@ -327,7 +361,9 @@ export function createStreamingController(ctx) {
         ctx.controllers.renderer.renderChat();
       } else {
         logger.error("Chat stream error", { anima: name, error: err.message, name: err.name });
-        streamingMsg.text += `\n${t("chat.error_prefix")} ${err.message}`;
+        const errLine = `${t("chat.error_prefix")} ${err.message}`;
+        if (!streamingMsg.text) streamingMsg.text = errLine;
+        else if (!streamingMsg.text.includes(err.message)) streamingMsg.text += `\n${errLine}`;
         streamingMsg.streaming = false; streamingMsg.activeTool = null;
         ctx.controllers.renderer.renderChat();
       }
