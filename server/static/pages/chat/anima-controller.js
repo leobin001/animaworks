@@ -8,6 +8,7 @@ import {
 export function createAnimaController(ctx) {
   const { state, deps } = ctx;
   const { api, escapeHtml, t, logger } = deps;
+  let _selectGen = 0;
 
   function ensureAnimaTabAvatar(name) {
     if (!name || isBusinessTheme()) return Promise.resolve();
@@ -135,6 +136,7 @@ export function createAnimaController(ctx) {
   }
 
   async function selectAnima(name) {
+    const gen = ++_selectGen;
     const prevAnima = state.selectedAnima;
     const currentInput = $("chatPageInput");
     if (prevAnima && currentInput) {
@@ -179,6 +181,9 @@ export function createAnimaController(ctx) {
     ctx.controllers.streaming.updateSendButton();
 
     const tid = state.selectedThreadId;
+
+    ctx.controllers.renderer.renderChat();
+
     const needConv = !state.historyState[name]?.[tid] || state.historyState[name][tid].sessions.length === 0;
     const convPromise = needConv
       ? ctx.controllers.renderer.fetchConversationHistory(name, 50, null, tid).catch(() => null)
@@ -187,6 +192,8 @@ export function createAnimaController(ctx) {
     const sessionsPromise = api(`/api/animas/${encodeURIComponent(name)}/sessions`).catch(() => null);
 
     const [conv, detail, sessionsData] = await Promise.all([convPromise, detailPromise, sessionsPromise]);
+
+    if (gen !== _selectGen) return;
 
     if (!state.historyState[name]) state.historyState[name] = {};
     if (conv && conv.sessions && conv.sessions.length > 0) {

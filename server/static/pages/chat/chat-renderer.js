@@ -216,6 +216,10 @@ export function createChatRenderer(ctx) {
 
       state.historyState[name][tid] = mergedHs;
 
+      if (state.chatHistories[name]?.[tid]) {
+        state.chatHistories[name][tid] = state.chatHistories[name][tid].filter(m => m.streaming);
+      }
+
       const messagesEl = $("chatPageMessages");
       const shouldStick = messagesEl
         ? (messagesEl.scrollHeight - (messagesEl.scrollTop + messagesEl.clientHeight)) <= 80
