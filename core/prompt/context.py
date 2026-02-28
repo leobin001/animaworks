@@ -22,6 +22,7 @@ from __future__ import annotations
 import fnmatch
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("animaworks.context_tracker")
@@ -115,6 +116,8 @@ def resolve_context_window(
     before matching.
     """
     bare = model.split("/", 1)[-1] if "/" in model else model
+    # Strip Bedrock cross-region prefix (e.g. "jp.anthropic.claude-..." → "claude-...")
+    bare = re.sub(r"^[a-z]{2}\.anthropic\.", "", bare)
     # Phase 1: config overrides (fnmatch wildcard)
     if overrides:
         for pattern, size in overrides.items():

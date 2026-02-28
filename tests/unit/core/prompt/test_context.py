@@ -46,6 +46,14 @@ class TestResolveContextWindow:
         assert _resolve_context_window("anthropic/claude-sonnet-4") == 200_000
         assert _resolve_context_window("google/gemini-2.5-pro") == 1_048_576
 
+    def test_bedrock_cross_region_prefix_stripped(self):
+        """Bedrock cross-region models (jp.anthropic., us.anthropic.) should resolve correctly."""
+        assert _resolve_context_window("bedrock/jp.anthropic.claude-sonnet-4-6") == 1_000_000
+        assert _resolve_context_window("bedrock/us.anthropic.claude-sonnet-4-6") == 1_000_000
+        assert _resolve_context_window("bedrock/eu.anthropic.claude-opus-4-6") == 1_000_000
+        # Standard bedrock (no region prefix) should still work
+        assert _resolve_context_window("bedrock/claude-sonnet-4-6") == 1_000_000
+
     def test_all_known_models(self):
         for prefix, expected in MODEL_CONTEXT_WINDOWS.items():
             assert _resolve_context_window(prefix) == expected

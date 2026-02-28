@@ -721,89 +721,92 @@ class CycleMixin:
                 shortterm.clear_checkpoint()
                 break
 
-        # Session chaining — force_chain from S mode mid-session auto-compact.
-        if _stream_force_chain and not tracker.threshold_exceeded:
-            tracker.force_threshold()
-            logger.info(
-                "Context auto-compact (stream): forcing threshold_exceeded "
-                "for session chaining"
-            )
-
+        # S mode: SDK manages context via auto-compact, no session chaining needed.
+        # Only Mode A/B use AnimaWorks session chaining in the streaming path.
         session_chained = False
         total_turns = result_message.num_turns if result_message else 0
         chain_count = 0
 
-        while (
-            tracker.threshold_exceeded
-            and chain_count < self.model_config.max_chains
-        ):
-            session_chained = True
-            chain_count += 1
-            logger.info(
-                "Session chain (stream) %d/%d: context at %.1f%%",
-                chain_count,
-                self.model_config.max_chains,
-                tracker.usage_ratio * 100,
-            )
-
-            yield {"type": "chain_start", "chain": chain_count}
-
-            shortterm.clear()
-            shortterm.save(
-                SessionState(
-                    session_id=result_message.session_id if result_message else "",
-                    timestamp=now_iso(),
-                    trigger=trigger,
-                    original_prompt=prompt,
-                    accumulated_response="\n".join(full_text_parts),
-                    context_usage_ratio=tracker.usage_ratio,
-                    turn_count=result_message.num_turns if result_message else 0,
+        if mode != "s":
+            # Session chaining — force_chain from mid-session auto-compact.
+            if _stream_force_chain and not tracker.threshold_exceeded:
+                tracker.force_threshold()
+                logger.info(
+                    "Context auto-compact (stream): forcing threshold_exceeded "
+                    "for session chaining"
                 )
-            )
 
-            tracker.reset()
-            system_prompt_2 = inject_shortterm(
-                build_system_prompt(
-                    self.memory,
-                    tool_registry=self._tool_registry,
-                    personal_tools=self._personal_tools,
-                    priming_section=priming_section,
-                    execution_mode=mode,
-                    message=prompt,
-                    retriever=self._get_retriever(),
-                    trigger=trigger,
-                    context_window=_ctx_window_s,
-                ).system_prompt,
-                shortterm,
-            )
-            continuation_prompt = load_prompt("session_continuation")
-
-            try:
-                async for chunk in self._executor.execute_streaming(
-                    system_prompt_2, continuation_prompt, tracker,
-                    max_turns_override=max_turns_override,
-                    trigger=trigger,
-                ):
-                    if chunk["type"] == "done":
-                        full_text_parts.append(chunk["full_text"])
-                        result_message = chunk["result_message"]
-                        all_tool_call_records.extend(
-                            chunk.get("tool_call_records", [])
-                        )
-                        if result_message:
-                            total_turns += result_message.num_turns
-                        # Merge transcript replied_to
-                        transcript_replied = chunk.get("replied_to_from_transcript", set())
-                        if transcript_replied:
-                            self._tool_handler.merge_replied_to(transcript_replied)
-                    else:
-                        yield chunk
-            except Exception:
-                logger.exception(
-                    "Chained session (stream) %d failed", chain_count,
+            while (
+                tracker.threshold_exceeded
+                and chain_count < self.model_config.max_chains
+            ):
+                session_chained = True
+                chain_count += 1
+                logger.info(
+                    "Session chain (stream) %d/%d: context at %.1f%%",
+                    chain_count,
+                    self.model_config.max_chains,
+                    tracker.usage_ratio * 100,
                 )
-                yield {"type": "error", "message": f"Session chain {chain_count} failed"}
-                break
+
+                yield {"type": "chain_start", "chain": chain_count}
+
+                shortterm.clear()
+                shortterm.save(
+                    SessionState(
+                        session_id=result_message.session_id if result_message else "",
+                        timestamp=now_iso(),
+                        trigger=trigger,
+                        original_prompt=prompt,
+                        accumulated_response="\n".join(full_text_parts),
+                        context_usage_ratio=tracker.usage_ratio,
+                        turn_count=result_message.num_turns if result_message else 0,
+                    )
+                )
+
+                tracker.reset()
+                system_prompt_2 = inject_shortterm(
+                    build_system_prompt(
+                        self.memory,
+                        tool_registry=self._tool_registry,
+                        personal_tools=self._personal_tools,
+                        priming_section=priming_section,
+                        execution_mode=mode,
+                        message=prompt,
+                        retriever=self._get_retriever(),
+                        trigger=trigger,
+                        context_window=_ctx_window_s,
+                    ).system_prompt,
+                    shortterm,
+                )
+                continuation_prompt = load_prompt("session_continuation")
+
+                try:
+                    async for chunk in self._executor.execute_streaming(
+                        system_prompt_2, continuation_prompt, tracker,
+                        max_turns_override=max_turns_override,
+                        trigger=trigger,
+                    ):
+                        if chunk["type"] == "done":
+                            full_text_parts.append(chunk["full_text"])
+                            result_message = chunk["result_message"]
+                            all_tool_call_records.extend(
+                                chunk.get("tool_call_records", [])
+                            )
+                            if result_message:
+                                total_turns += result_message.num_turns
+                            # Merge transcript replied_to
+                            transcript_replied = chunk.get("replied_to_from_transcript", set())
+                            if transcript_replied:
+                                self._tool_handler.merge_replied_to(transcript_replied)
+                        else:
+                            yield chunk
+                except Exception:
+                    logger.exception(
+                        "Chained session (stream) %d failed", chain_count,
+                    )
+                    yield {"type": "error", "message": f"Session chain {chain_count} failed"}
+                    break
 
         shortterm.clear()
 
