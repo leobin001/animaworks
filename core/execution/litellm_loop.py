@@ -297,6 +297,9 @@ class LiteLLMExecutor(
         Dispatches to token-level streaming (non-Ollama) or iteration-level
         streaming (Ollama) based on the model type.
 
+        Note: Session chaining is handled by AgentCore.run_cycle_streaming(),
+        not within this method.
+
         Yields:
             Event dicts: ``text_delta``, ``tool_start``, ``tool_end``, ``done``.
         """
