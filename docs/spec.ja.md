@@ -162,6 +162,7 @@ animaworks/
 |`system`            |動作モード、ログレベル                   |
 |`credentials`       |プロバイダ別APIキー・エンドポイント（名前付きマップ）   |
 |`model_modes`       |モデル名→実行モード（S/A/B）のカスタムマッピング    |
+|`model_context_windows`|モデル名パターン→コンテキストウィンドウサイズのオーバーライド（fnmatch）|
 |`anima_defaults`    |全Animaに適用されるデフォルト値             |
 |`animas`            |Anima単位のオーバーライド（未指定フィールドはdefaults適用）|
 |`consolidation`     |記憶統合設定（日次/週次の実行時刻・閾値）         |
@@ -215,6 +216,14 @@ animaworks/
 ```
 
 **セキュリティ:** config.jsonのパーミッションは `0o600`（owner read/write only）で保存される。APIキーは環境変数での管理も引き続きサポート。
+
+**コンテキストウィンドウ解決**（`resolve_context_window()` — `core/prompt/context.py`）:
+
+1. config.json `model_context_windows`（最優先 — fnmatch ワイルドカードパターン）
+2. `MODEL_CONTEXT_WINDOWS` ハードコード辞書（フォールバック — プレフィックスマッチ）
+3. `_DEFAULT_CONTEXT_WINDOW` = 128,000（最終フォールバック）
+
+ハードコードのデフォルト値はコスト安全側に設定（例: `claude-sonnet-4-6: 128,000`）。より大きいウィンドウが必要な場合は config.json でオーバーライドする。コンパクション閾値は自動スケール: 200K 以上のウィンドウでは設定値（デフォルト 0.50）をそのまま使用、200K 未満は 0.98 に向けて線形スケール。
 
 ### 3.3 モデル・認証設定（credentials）
 
