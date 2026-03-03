@@ -23,7 +23,7 @@ from core.execution._streaming import (
     parse_accumulated_tool_calls,
     stream_error_boundary,
 )
-from core.execution.base import ExecutionResult, ToolCallRecord
+from core.execution.base import ExecutionResult, TokenUsage, ToolCallRecord
 from core.execution.reminder import MSG_CONTEXT_THRESHOLD, MSG_FINAL_ITERATION, MSG_OUTPUT_TRUNCATED, SystemReminderQueue
 from core.prompt.context import ContextTracker, resolve_context_window
 from core.execution._litellm_tools import _convert_litellm_tool_calls
@@ -65,6 +65,7 @@ class StreamingMixin:
         all_tool_records: list[ToolCallRecord] = []
         llm_kwargs = self._build_llm_kwargs()
         max_iterations = max_turns_override or self._model_config.max_turns
+        _usage_acc = TokenUsage()
 
         # Inject synthetic thinking_blocks into prior assistant messages
         # that have tool_calls but no thinking_blocks.  Without this,
@@ -258,7 +259,10 @@ class StreamingMixin:
                         self._model_config.model,
                     )
 
-                # Update context tracker
+                # Update context tracker + accumulate usage
+                if usage_data:
+                    _usage_acc.input_tokens += usage_data.get("input_tokens", 0) or usage_data.get("prompt_tokens", 0) or 0
+                    _usage_acc.output_tokens += usage_data.get("output_tokens", 0) or usage_data.get("completion_tokens", 0) or 0
                 if tracker and usage_data:
                     tracker.update_from_usage(usage_data)
 
@@ -289,6 +293,7 @@ class StreamingMixin:
                         "full_text": full_text,
                         "result_message": None,
                         "tool_call_records": [asdict(r) for r in all_tool_records],
+                        "usage": _usage_acc.to_dict(),
                     }
                     return
 
@@ -352,6 +357,7 @@ class StreamingMixin:
             "full_text": full_text,
             "result_message": None,
             "tool_call_records": [asdict(r) for r in all_tool_records],
+            "usage": _usage_acc.to_dict(),
         }
 
     # ── Iteration-level streaming (Ollama) ───────────────────
@@ -384,6 +390,7 @@ class StreamingMixin:
         all_tool_records: list[ToolCallRecord] = []
         llm_kwargs = self._build_llm_kwargs()
         max_iterations = max_turns_override or self._model_config.max_turns
+        _usage_acc_ol = TokenUsage()
 
         async with stream_error_boundary(
             all_response_text, executor_name="A-ollama-stream",
@@ -392,7 +399,7 @@ class StreamingMixin:
                 if self._check_interrupted():
                     logger.info("LiteLLM streaming interrupted at iteration=%d", iteration)
                     yield {"type": "text_delta", "text": "[Session interrupted by user]"}
-                    yield {"type": "done", "full_text": "[Session interrupted by user]", "result_message": None}
+                    yield {"type": "done", "full_text": "[Session interrupted by user]", "result_message": None, "usage": _usage_acc_ol.to_dict()}
                     return
 
                 is_final_iteration = (
@@ -448,14 +455,16 @@ class StreamingMixin:
                 message = choice.message
 
                 # ── Context tracking ──
-                if tracker and hasattr(response, "usage") and response.usage:
-                    usage_dict = {
-                        "input_tokens": response.usage.prompt_tokens or 0,
-                        "output_tokens": response.usage.completion_tokens or 0,
-                    }
-                    tracker.update_from_usage(usage_dict)
+                if hasattr(response, "usage") and response.usage:
+                    _inp_ol = response.usage.prompt_tokens or 0
+                    _out_ol = response.usage.completion_tokens or 0
+                    _usage_acc_ol.input_tokens += _inp_ol
+                    _usage_acc_ol.output_tokens += _out_ol
+                    usage_dict = {"input_tokens": _inp_ol, "output_tokens": _out_ol}
+                    if tracker:
+                        tracker.update_from_usage(usage_dict)
 
-                    if tracker.threshold_exceeded:
+                    if tracker and tracker.threshold_exceeded:
                         try:
                             ratio = float(tracker.usage_ratio)
                         except (TypeError, ValueError):
@@ -486,6 +495,7 @@ class StreamingMixin:
                         "full_text": full_text,
                         "result_message": None,
                         "tool_call_records": [asdict(r) for r in all_tool_records],
+                        "usage": _usage_acc_ol.to_dict(),
                     }
                     return
 
@@ -537,4 +547,5 @@ class StreamingMixin:
             "full_text": full_text,
             "result_message": None,
             "tool_call_records": [asdict(r) for r in all_tool_records],
+            "usage": _usage_acc_ol.to_dict(),
         }

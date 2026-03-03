@@ -134,6 +134,35 @@ class ToolCallRecord:
 
 
 @dataclass
+class TokenUsage:
+    """Token usage for a single execution session (all modes)."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+    def merge(self, other: "TokenUsage") -> None:
+        """Accumulate usage from another TokenUsage (for chaining)."""
+        self.input_tokens += other.input_tokens
+        self.output_tokens += other.output_tokens
+        self.cache_read_tokens += other.cache_read_tokens
+        self.cache_write_tokens += other.cache_write_tokens
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+        }
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+@dataclass
 class ExecutionResult:
     """Result of a single execution session.
 
@@ -146,6 +175,7 @@ class ExecutionResult:
             regardless of the ContextTracker state.  Set by the S executor
             when mid-session context auto-compact triggers via PreToolUse
             ``continue_=False``.
+        usage: Token usage for this session.  Populated by each executor.
     """
 
     text: str
@@ -154,6 +184,7 @@ class ExecutionResult:
     unconfirmed_sends: list[dict] = field(default_factory=list)
     tool_call_records: list[ToolCallRecord] = field(default_factory=list)
     force_chain: bool = False
+    usage: TokenUsage | None = None
 
 
 class BaseExecutor(ABC):

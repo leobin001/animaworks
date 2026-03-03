@@ -627,6 +627,36 @@ def create_system_router() -> APIRouter:
         logger.info("Display mode changed to %s (image_style synced)", mode)
         return {"ok": True, "mode": mode}
 
+    # ── Token Usage / Cost ────────────────────────────────────
+
+    @router.get("/system/cost")
+    async def get_token_cost(
+        request: Request,
+        anima: str | None = None,
+        days: int = 30,
+    ):
+        """Return token usage summary and estimated cost."""
+        from core.memory.token_usage import TokenUsageLogger
+        from core.paths import get_data_dir
+
+        animas_dir = get_data_dir() / "animas"
+        if anima:
+            anima_dir = animas_dir / anima
+            if not anima_dir.is_dir():
+                return {"error": f"Anima '{anima}' not found"}
+            tul = TokenUsageLogger(anima_dir)
+            return {anima: tul.summarize(days)}
+
+        result: dict = {}
+        if animas_dir.is_dir():
+            for ad in sorted(animas_dir.iterdir()):
+                if ad.is_dir() and (ad / "token_usage").is_dir():
+                    tul = TokenUsageLogger(ad)
+                    s = tul.summarize(days)
+                    if s["total_sessions"] > 0:
+                        result[ad.name] = s
+        return result
+
     # ── Health Check ────────────────────────────────────────
 
     @router.get("/system/health")

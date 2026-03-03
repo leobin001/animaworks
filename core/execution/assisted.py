@@ -35,7 +35,7 @@ from typing import Any
 from core.exceptions import LLMAPIError, ToolExecutionError, ConfigError  # noqa: F401
 from core.i18n import t
 from core.execution._sanitize import wrap_tool_result
-from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord, _truncate_for_record, tool_input_save_budget, tool_result_save_budget
+from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, TokenUsage, ToolCallRecord, _truncate_for_record, tool_input_save_budget, tool_result_save_budget
 from core.execution.reminder import MSG_OUTPUT_TRUNCATED, SystemReminderQueue
 from core.execution._streaming import stream_error_boundary
 from core.memory import MemoryManager
@@ -440,6 +440,7 @@ class AssistedExecutor(BaseExecutor):
         all_tool_records: list[ToolCallRecord] = []
         max_iterations = max_turns_override or self._model_config.max_turns
         intent_reprompt_count = 0
+        usage_acc = TokenUsage()
 
         # ── 2. Tool-call loop ────────────────────────────────
         for iteration in range(max_iterations):
@@ -468,6 +469,9 @@ class AssistedExecutor(BaseExecutor):
 
             choice = response.choices[0]
             content = choice.message.content or ""
+            if hasattr(response, "usage") and response.usage:
+                usage_acc.input_tokens += response.usage.prompt_tokens or 0
+                usage_acc.output_tokens += response.usage.completion_tokens or 0
 
             # P1-2: output truncation reminder
             if choice.finish_reason == "length":
@@ -592,6 +596,7 @@ class AssistedExecutor(BaseExecutor):
         return ExecutionResult(
             text=final_text or "(max iterations reached)",
             tool_call_records=all_tool_records,
+            usage=usage_acc,
         )
 
     async def execute_streaming(
@@ -639,6 +644,7 @@ class AssistedExecutor(BaseExecutor):
         all_tool_records: list[ToolCallRecord] = []
         max_iterations = max_turns_override or self._model_config.max_turns
         intent_reprompt_count = 0
+        _usage_acc_bs = TokenUsage()
 
         # ── 2. Tool-call loop ────────────────────────────────
         async with stream_error_boundary(
@@ -666,6 +672,9 @@ class AssistedExecutor(BaseExecutor):
                 )
                 choice = response.choices[0]
                 content = choice.message.content or ""
+                if hasattr(response, "usage") and response.usage:
+                    _usage_acc_bs.input_tokens += response.usage.prompt_tokens or 0
+                    _usage_acc_bs.output_tokens += response.usage.completion_tokens or 0
 
                 # P1-2: output truncation reminder
                 if choice.finish_reason == "length":
@@ -810,4 +819,5 @@ class AssistedExecutor(BaseExecutor):
             "full_text": final_text or "(max iterations reached)",
             "result_message": None,
             "tool_call_records": [asdict(r) for r in all_tool_records],
+            "usage": _usage_acc_bs.to_dict(),
         }
