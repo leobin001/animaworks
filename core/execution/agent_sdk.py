@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 from core.prompt.context import CHARS_PER_TOKEN, ContextTracker, resolve_context_window
 from core.exceptions import ExecutionError, LLMAPIError, MemoryWriteError  # noqa: F401
-from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord
+from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, TokenUsage, ToolCallRecord
 from core.schemas import ModelConfig
 from core.memory.shortterm import ShortTermMemory
 from pathlib import Path
@@ -364,6 +364,7 @@ class AgentSDKExecutor(BaseExecutor):
         tracker: ContextTracker | None,
         session_type: str = "chat",
         images: list[dict[str, Any]] | None = None,
+        usage_acc: TokenUsage | None = None,
     ) -> "ResultMessage | None":
         """Run query + message loop for blocking (non-streaming) execution.
 
@@ -397,6 +398,10 @@ class AgentSDKExecutor(BaseExecutor):
                     _save_session_id(self._anima_dir, message.session_id, session_type)
                 if tracker:
                     tracker.update_from_result_message(message.usage)
+                if usage_acc and message.usage:
+                    u = message.usage
+                    usage_acc.input_tokens = getattr(u, "input_tokens", 0) or 0
+                    usage_acc.output_tokens = getattr(u, "output_tokens", 0) or 0
             elif isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextBlock):
@@ -492,6 +497,7 @@ class AgentSDKExecutor(BaseExecutor):
         pending_records: dict[str, ToolCallRecord] = {}
         result_message = None
         message_count = 0
+        usage_acc = TokenUsage()
 
         try:
             logger.info(
@@ -504,6 +510,7 @@ class AgentSDKExecutor(BaseExecutor):
                     client, prompt, response_text, pending_records,
                     session_stats, tracker, session_type,
                     images=images,
+                    usage_acc=usage_acc,
                 )
             logger.debug("ClaudeSDKClient disconnected")
         except (ProcessError, ClaudeSDKError) as e:
@@ -528,6 +535,7 @@ class AgentSDKExecutor(BaseExecutor):
                             client, prompt, response_text, pending_records,
                             session_stats, tracker, session_type,
                             images=images,
+                            usage_acc=usage_acc,
                         )
                 except Exception as retry_exc:
                     logger.exception("Agent SDK execution error (fresh session retry)")
@@ -566,6 +574,7 @@ class AgentSDKExecutor(BaseExecutor):
             replied_to_from_transcript=replied_to,
             tool_call_records=all_tool_records,
             force_chain=session_stats.get("force_chain", False),
+            usage=usage_acc,
         )
 
     # ── Streaming execution ──────────────────────────────────
@@ -638,6 +647,7 @@ class AgentSDKExecutor(BaseExecutor):
         result_message: ResultMessage | None = None
         active_tool_ids: set[str] = set()
         message_count = 0
+        usage_acc = TokenUsage()
 
         # --- inline helper: streaming message loop (not extractable because
         #     it yields from the generator) ---
@@ -667,6 +677,8 @@ class AgentSDKExecutor(BaseExecutor):
                         usage = event.get("message", {}).get("usage", {})
                         if usage:
                             tracker.update_from_message_start(usage)
+                            usage_acc.cache_read_tokens += usage.get("cache_read_input_tokens", 0)
+                            usage_acc.cache_write_tokens += usage.get("cache_creation_input_tokens", 0)
 
                     elif event_type == "content_block_start":
                         block = event.get("content_block", {})
@@ -743,6 +755,10 @@ class AgentSDKExecutor(BaseExecutor):
                     # all turns (not the current context size) and would
                     # produce inaccurate threshold checks.  Context tracking is
                     # handled per-turn via message_start events above.
+                    if message.usage:
+                        u = message.usage
+                        usage_acc.input_tokens = getattr(u, "input_tokens", 0) or 0
+                        usage_acc.output_tokens = getattr(u, "output_tokens", 0) or 0
                     break  # receive_messages() does not auto-stop on ResultMessage
 
                 elif isinstance(message, SystemMessage):
@@ -892,4 +908,5 @@ class AgentSDKExecutor(BaseExecutor):
             "replied_to_from_transcript": replied_to,
             "tool_call_records": [asdict(r) for r in all_tool_records],
             "force_chain": session_stats.get("force_chain", False),
+            "usage": usage_acc.to_dict(),
         }

@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from core.execution.base import ExecutionResult
 
 from core._agent_prompt_log import _save_prompt_log, _save_prompt_log_end
@@ -28,6 +29,39 @@ from core.paths import load_prompt
 from core.i18n import t
 
 logger = logging.getLogger("animaworks.agent")
+
+
+def _log_session_token_usage(
+    anima_dir: "Path",
+    *,
+    model: str,
+    mode: str,
+    trigger: str,
+    usage: dict[str, int] | None,
+    duration_ms: int = 0,
+    turns: int = 0,
+    chains: int = 0,
+) -> None:
+    """Fire-and-forget token usage log entry."""
+    if not usage or not any(usage.values()):
+        return
+    try:
+        from core.memory.token_usage import TokenUsageLogger
+        tul = TokenUsageLogger(anima_dir)
+        tul.log(
+            model=model,
+            trigger=trigger,
+            mode=mode,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            cache_read_tokens=usage.get("cache_read_tokens", 0),
+            cache_write_tokens=usage.get("cache_write_tokens", 0),
+            turns=turns,
+            chains=chains,
+            duration_ms=duration_ms,
+        )
+    except Exception:
+        logger.debug("Failed to log token usage", exc_info=True)
 
 
 class CycleMixin:
@@ -188,12 +222,18 @@ class CycleMixin:
                 "run_cycle END (mode-b) trigger=%s duration_ms=%d response_len=%d",
                 trigger, duration_ms, len(result.text),
             )
+            _b_usage = result.usage.to_dict() if result.usage else None
+            _log_session_token_usage(
+                self.anima_dir, model=self.model_config.model, mode="b",
+                trigger=trigger, usage=_b_usage, duration_ms=duration_ms,
+            )
             return CycleResult(
                 trigger=trigger,
                 action="responded",
                 summary=result.text,
                 duration_ms=duration_ms,
                 tool_call_records=_tool_records_to_dicts(result),
+                usage=_b_usage,
             )
 
         # ── Mode C: Codex SDK ─────────────────────────────
@@ -219,6 +259,11 @@ class CycleMixin:
                 "run_cycle END (c) trigger=%s duration_ms=%d response_len=%d",
                 trigger, duration_ms, len(result.text),
             )
+            _c_usage = result.usage.to_dict() if result.usage else None
+            _log_session_token_usage(
+                self.anima_dir, model=self.model_config.model, mode="c",
+                trigger=trigger, usage=_c_usage, duration_ms=duration_ms,
+            )
             return CycleResult(
                 trigger=trigger,
                 action="responded",
@@ -226,6 +271,7 @@ class CycleMixin:
                 duration_ms=duration_ms,
                 context_usage_ratio=tracker.usage_ratio,
                 tool_call_records=_tool_records_to_dicts(result),
+                usage=_c_usage,
             )
 
         # ── Mode A: LiteLLM tool_use loop ─────────────────
@@ -250,6 +296,11 @@ class CycleMixin:
                 "run_cycle END (a) trigger=%s duration_ms=%d response_len=%d",
                 trigger, duration_ms, len(result.text),
             )
+            _a_usage = result.usage.to_dict() if result.usage else None
+            _log_session_token_usage(
+                self.anima_dir, model=self.model_config.model, mode="a",
+                trigger=trigger, usage=_a_usage, duration_ms=duration_ms,
+            )
             return CycleResult(
                 trigger=trigger,
                 action="responded",
@@ -257,6 +308,7 @@ class CycleMixin:
                 duration_ms=duration_ms,
                 context_usage_ratio=tracker.usage_ratio,
                 tool_call_records=_tool_records_to_dicts(result),
+                usage=_a_usage,
             )
 
         # ── Mode S: Claude Agent SDK ──────────────────────
@@ -398,6 +450,12 @@ class CycleMixin:
             "run_cycle END trigger=%s duration_ms=%d response_len=%d chained=%s",
             trigger, duration_ms, len(accumulated_text), session_chained,
         )
+        _cycle_usage = result.usage.to_dict() if result.usage else None
+        _log_session_token_usage(
+            self.anima_dir, model=self.model_config.model, mode="s",
+            trigger=trigger, usage=_cycle_usage, duration_ms=duration_ms,
+            turns=total_turns, chains=chain_count if session_chained else 0,
+        )
         return CycleResult(
             trigger=trigger,
             action="responded",
@@ -407,6 +465,7 @@ class CycleMixin:
             session_chained=session_chained,
             total_turns=total_turns,
             tool_call_records=accumulated_tool_records,
+            usage=_cycle_usage,
         )
 
     # ── Streaming ──────────────────────────────────────────
@@ -569,6 +628,7 @@ class CycleMixin:
         all_tool_call_records: list[dict] = []
         result_message: Any = None
         _stream_force_chain = False
+        _stream_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}
         current_prompt = prompt
         current_system_prompt = system_prompt
         retry_count = 0
@@ -594,6 +654,11 @@ class CycleMixin:
                         all_tool_call_records.extend(
                             chunk.get("tool_call_records", [])
                         )
+                        # Accumulate token usage
+                        _chunk_usage = chunk.get("usage")
+                        if _chunk_usage:
+                            for _uk in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
+                                _stream_usage[_uk] = _stream_usage.get(_uk, 0) + (_chunk_usage.get(_uk, 0) or 0)
                         # Merge transcript replied_to
                         transcript_replied = chunk.get("replied_to_from_transcript", set())
                         if transcript_replied:
@@ -797,6 +862,10 @@ class CycleMixin:
                         all_tool_call_records.extend(
                             chunk.get("tool_call_records", [])
                         )
+                        _chunk_usage2 = chunk.get("usage")
+                        if _chunk_usage2:
+                            for _uk2 in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
+                                _stream_usage[_uk2] = _stream_usage.get(_uk2, 0) + (_chunk_usage2.get(_uk2, 0) or 0)
                         if result_message:
                             total_turns += result_message.num_turns
                         # Merge transcript replied_to
@@ -828,6 +897,12 @@ class CycleMixin:
             trigger, duration_ms, len(full_text), session_chained, retry_count,
         )
 
+        _final_usage = _stream_usage if any(_stream_usage.values()) else None
+        _log_session_token_usage(
+            self.anima_dir, model=self.model_config.model, mode=mode,
+            trigger=trigger, usage=_final_usage, duration_ms=duration_ms,
+            turns=total_turns, chains=chain_count if session_chained else 0,
+        )
         yield {
             "type": "cycle_done",
             "cycle_result": CycleResult(
@@ -840,5 +915,6 @@ class CycleMixin:
                 session_chained=session_chained,
                 total_turns=total_turns,
                 tool_call_records=all_tool_call_records,
+                usage=_final_usage,
             ).model_dump(mode="json"),
         }

@@ -415,6 +415,26 @@ def cli_main() -> None:
     )
     p_logs.set_defaults(func=_lazy_logs)
 
+    # ── Cost ──────────────────────────────────────────────────
+    p_cost = sub.add_parser("cost", help=t("cli.cost_help", fallback="Show token usage and estimated cost"))
+    p_cost.add_argument(
+        "anima", nargs="?", default=None,
+        help="Anima name (omit for all animas)",
+    )
+    p_cost.add_argument(
+        "--days", type=int, default=30,
+        help="Number of days to aggregate (default: 30)",
+    )
+    p_cost.add_argument(
+        "--today", action="store_true",
+        help="Show today only",
+    )
+    p_cost.add_argument(
+        "--json", action="store_true", dest="json_output",
+        help="Output as JSON",
+    )
+    p_cost.set_defaults(func=_lazy_cost)
+
     # ── Migrate Cron ─────────────────────────────────────────
     p_migrate_cron = sub.add_parser(
         "migrate-cron",
@@ -552,6 +572,12 @@ def _lazy_logs(args: argparse.Namespace) -> None:
     from cli.commands.logs import cmd_logs
 
     cmd_logs(args)
+
+
+def _lazy_cost(args: argparse.Namespace) -> None:
+    from cli.commands.cost_cmd import cmd_cost
+
+    cmd_cost(args)
 
 
 def _lazy_status(args: argparse.Namespace) -> None:

@@ -30,7 +30,7 @@ from typing import Any
 from core.exceptions import LLMAPIError, ToolExecutionError, ConfigError  # noqa: F401
 from core.prompt.context import ContextTracker, resolve_context_window
 from core.execution._session import build_continuation_prompt, handle_session_chaining
-from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, ToolCallRecord
+from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, TokenUsage, ToolCallRecord
 from core.execution.reminder import MSG_CONTEXT_THRESHOLD, MSG_FINAL_ITERATION, MSG_OUTPUT_TRUNCATED, SystemReminderQueue
 from core.memory import MemoryManager
 from core.prompt.builder import build_system_prompt
@@ -126,6 +126,7 @@ class LiteLLMExecutor(
         llm_kwargs = self._build_llm_kwargs()
         max_iterations = max_turns_override or self._model_config.max_turns
         chain_count = 0
+        usage_acc = TokenUsage()
 
         for iteration in range(max_iterations):
             if self._check_interrupted():
@@ -184,12 +185,14 @@ class LiteLLMExecutor(
             message = choice.message
 
             # ── Context tracking + session chaining ───────────
-            if tracker and hasattr(response, "usage") and response.usage:
-                usage_dict = {
-                    "input_tokens": response.usage.prompt_tokens or 0,
-                    "output_tokens": response.usage.completion_tokens or 0,
-                }
-                tracker.update_from_usage(usage_dict)
+            if hasattr(response, "usage") and response.usage:
+                _inp = response.usage.prompt_tokens or 0
+                _out = response.usage.completion_tokens or 0
+                usage_acc.input_tokens += _inp
+                usage_acc.output_tokens += _out
+                usage_dict = {"input_tokens": _inp, "output_tokens": _out}
+                if tracker:
+                    tracker.update_from_usage(usage_dict)
 
                 if tracker.threshold_exceeded:
                     try:
@@ -248,6 +251,7 @@ class LiteLLMExecutor(
                 return ExecutionResult(
                     text="\n".join(all_response_text),
                     tool_call_records=all_tool_records,
+                    usage=usage_acc,
                 )
 
             # ── Process tool calls ────────────────────────────
@@ -278,6 +282,7 @@ class LiteLLMExecutor(
         return ExecutionResult(
             text="\n".join(all_response_text) or "(max iterations reached)",
             tool_call_records=all_tool_records,
+            usage=usage_acc,
         )
 
     # ── Streaming execution ──────────────────────────────────
