@@ -36,7 +36,7 @@ def parse_permitted_tools(text: str) -> set[str]:
     """Parse permissions.md text and return permitted tool module names.
 
     Strategy:
-      1. No ``外部ツール`` section present → ALL tools (default-all)
+      1. No ``外部ツール`` / ``External Tools`` section present → ALL tools (default-all)
       2. ``- all: yes`` found → ALL tools minus any deny entries
       3. Individual ``- tool: yes`` entries → whitelist mode (backward compat)
       4. Section present but no matching entries → ALL tools
@@ -48,7 +48,7 @@ def parse_permitted_tools(text: str) -> set[str]:
 
     all_tools = set(TOOL_MODULES.keys())
 
-    if "外部ツール" not in text:
+    if "外部ツール" not in text and "External Tools" not in text:
         return all_tools
 
     has_all_yes = False

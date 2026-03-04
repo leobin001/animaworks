@@ -272,20 +272,7 @@ DEFAULT_DESCRIPTIONS: dict[str, dict[str, str]] = {
             "Use send_message for routine reports; call_human for urgent cases only."
         ),
     },
-    # -- Discovery --
-    "discover_tools": {
-        "ja": (
-            "利用可能な外部ツールカテゴリを確認する。"
-            "引数なしで呼ぶとカテゴリ一覧を返す。"
-            "カテゴリ名を指定して呼ぶとそのツール群が使えるようになる。"
-            "外部サービス（Slack, Chatwork, Gmail等）を使いたい時にまず呼ぶこと。"
-        ),
-        "en": (
-            "Discover available external tool categories. "
-            "Call without args for category list; with category name to activate that group. "
-            "Call this first when you need external services (Slack, Chatwork, Gmail, etc.)."
-        ),
-    },
+    # -- Discovery (deprecated — discover_tools is empty, kept for backward compat) --
     # -- Tool management --
     "refresh_tools": {
         "ja": (

@@ -486,7 +486,9 @@ class TestGetToolHandler:
              patch("core.tooling.handler.ToolHandler", return_value=mock_tool_handler) as mock_th_cls, \
              patch("core.config.models.load_config"), \
              patch("core.notification.notifier.HumanNotifier") as mock_hn_cls, \
-             patch("core.tools.TOOL_MODULES", side_effect=ImportError("no tools")):
+             patch("core.tools.TOOL_MODULES", side_effect=ImportError("no tools")), \
+             patch("core.tools.discover_common_tools", return_value={}), \
+             patch("core.tools.discover_personal_tools", return_value={}):
             mock_hn_inst = MagicMock()
             mock_hn_inst.channel_count = 0
             mock_hn_cls.from_config.return_value = mock_hn_inst
