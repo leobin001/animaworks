@@ -14,6 +14,7 @@ import os
 import re
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,15 @@ from core.memory.shortterm import ShortTermMemory
 # ── Streaming error ──────────────────────────────────────────
 
 from core.exceptions import StreamDisconnectedError  # noqa: F401 – re-export
+
+# ── Per-task interrupt event ─────────────────────────────────
+# Each asyncio task (i.e. each concurrent HTTP request) gets its own
+# interrupt event via this ContextVar, avoiding race conditions when
+# multiple chat threads share a single executor instance.
+
+_active_interrupt_event: ContextVar[asyncio.Event | None] = ContextVar(
+    "_active_interrupt_event", default=None,
+)
 
 
 # ── Adaptive Thinking helpers ─────────────────────────────────
@@ -394,8 +404,15 @@ class BaseExecutor(ABC):
         return 600
 
     def _check_interrupted(self) -> bool:
-        """Return True if the interrupt event has been set."""
-        return self._interrupt_event is not None and self._interrupt_event.is_set()
+        """Return True if the interrupt event has been set.
+
+        Prefers the per-task ContextVar (thread-safe for parallel streams)
+        over the instance-level fallback.
+        """
+        evt = _active_interrupt_event.get(None)
+        if evt is None:
+            evt = self._interrupt_event
+        return evt is not None and evt.is_set()
 
     # -- Execution -----------------------------------------
 
