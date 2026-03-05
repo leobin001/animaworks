@@ -32,7 +32,14 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from core.exceptions import LLMAPIError, ToolExecutionError, ConfigError  # noqa: F401
+from core.exceptions import (
+    AnimaWorksError,
+    ConfigError,
+    ConfigNotFoundError,
+    ExecutionError,
+    LLMAPIError,
+    ToolExecutionError,
+)  # noqa: F401
 from core.i18n import t
 from core.execution._sanitize import wrap_tool_result
 from core.execution.base import BaseExecutor, ExecutionResult, StreamDisconnectedError, TokenUsage, ToolCallRecord, _truncate_for_record, strip_thinking_tags, tool_input_save_budget, tool_result_save_budget
@@ -253,7 +260,7 @@ class AssistedExecutor(BaseExecutor):
 
         try:
             _cw_overrides = load_config().model_context_windows
-        except Exception:
+        except (ConfigError, ConfigNotFoundError):
             logger.debug("Failed to load model context windows", exc_info=True)
             _cw_overrides = None
 
@@ -386,7 +393,7 @@ class AssistedExecutor(BaseExecutor):
             from core.config import load_config
             try:
                 _cw_overrides = load_config().model_context_windows
-            except Exception:
+            except (ConfigError, ConfigNotFoundError):
                 logger.debug("Failed to load model context windows", exc_info=True)
                 _cw_overrides = None
             kwargs["num_ctx"] = resolve_context_window(
@@ -456,9 +463,13 @@ class AssistedExecutor(BaseExecutor):
                     messages,
                     max_tokens_override=preflight.get("max_tokens"),
                 )
+            except LLMAPIError:
+                raise
+            except AnimaWorksError:
+                raise
             except Exception as e:
                 logger.exception("LiteLLM API error in Mode B")
-                return ExecutionResult(text=f"[LLM API Error: {e}]")
+                raise ExecutionError(str(e)) from e
 
             choice = response.choices[0]
             content = choice.message.content or ""
@@ -547,6 +558,8 @@ class AssistedExecutor(BaseExecutor):
             except ToolExecutionError as e:
                 logger.warning("Mode B tool execution error: %s – %s", tool_name, e)
                 result = t("assisted.tool_exec_error", error=e)
+            except AnimaWorksError:
+                raise
             except Exception as e:
                 logger.exception("Mode B unexpected tool error: %s", tool_name)
                 result = t("assisted.tool_exec_error", error=e)
@@ -771,6 +784,8 @@ class AssistedExecutor(BaseExecutor):
                         "Mode B streaming tool error: %s – %s", tool_name, e,
                     )
                     result = t("assisted.tool_exec_error", error=e)
+                except AnimaWorksError:
+                    raise
                 except Exception as e:
                     logger.exception(
                         "Mode B streaming unexpected tool error: %s", tool_name,

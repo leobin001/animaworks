@@ -30,6 +30,7 @@ from typing import ClassVar
 from core.time_utils import ensure_aware, now_iso, now_jst
 from typing import TYPE_CHECKING, Any, cast
 
+from core.exceptions import ConfigError, ExecutionError, LLMAPIError
 from core.i18n import t
 from core.memory._io import atomic_write_text
 from core.paths import load_prompt
@@ -211,7 +212,7 @@ class ConversationMemory:
             from core.config.models import load_config
             config = load_config()
             return config.model_context_windows or None
-        except Exception:
+        except ConfigError:
             return None
 
     # ── Load / Save ──────────────────────────────────────────
@@ -737,7 +738,7 @@ class ConversationMemory:
 
         try:
             summary = await self._call_compression_llm(old_summary, turn_text)
-        except Exception:
+        except (LLMAPIError, ExecutionError):
             logger.exception("Conversation compression failed; keeping raw turns")
             return
 
@@ -877,7 +878,7 @@ class ConversationMemory:
             raw_summary = await self._summarize_session_with_state(
                 new_turns, activity_context,
             )
-        except Exception:
+        except (LLMAPIError, ExecutionError):
             logger.exception("Failed to summarize session; skipping episode write")
             return False
 
@@ -914,7 +915,7 @@ class ConversationMemory:
         try:
             compressed = await self._call_compression_llm(old_summary, turn_text)
             state.compressed_summary = compressed
-        except Exception:
+        except (LLMAPIError, ExecutionError):
             logger.warning("Compression failed during finalization; keeping raw turns")
 
         # 5. Update tracking index
