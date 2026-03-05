@@ -225,6 +225,7 @@ class ServerConfig(BaseModel):
     stream_checkpoint_enabled: bool = True  # save tool results during streaming
     stream_retry_max: int = 3  # max automatic retries on stream disconnect
     stream_retry_delay_s: float = 5.0  # delay between retries (seconds)
+    llm_num_retries: int = 3  # retries for LLM API calls (429/5xx/network)
     media_proxy: MediaProxyConfig = MediaProxyConfig()
 
     @model_validator(mode="after")

@@ -8,8 +8,10 @@
 """Shared retry/backoff utility for AnimaWorks tools."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+from collections.abc import Awaitable
 from typing import Any, Callable, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -144,3 +146,53 @@ def retry_on_rate_limit(
     if last_exc is not None:
         raise last_exc
     raise RuntimeError("Rate limit retry exhausted")  # pragma: no cover
+
+
+# ── Async Public API ──────────────────────────────────────
+
+
+async def async_retry_with_backoff(
+    fn: Callable[..., Awaitable[T]],
+    *args: Any,
+    max_retries: int = _DEFAULT_MAX_RETRIES,
+    base_delay: float = _DEFAULT_BASE_DELAY,
+    max_delay: float = _DEFAULT_MAX_DELAY,
+    retry_on: tuple[type[Exception], ...] = (Exception,),
+    **kwargs: Any,
+) -> T:
+    """Execute async *fn* with exponential backoff retry.
+
+    Args:
+        fn: The async callable to execute.
+        *args: Positional arguments forwarded to *fn*.
+        max_retries: Maximum number of retry attempts (0 = no retries).
+        base_delay: Initial delay in seconds before first retry.
+        max_delay: Cap on the computed backoff delay.
+        retry_on: Tuple of exception types that trigger a retry.
+        **kwargs: Keyword arguments forwarded to *fn*.
+
+    Returns:
+        The return value of *fn* on success.
+
+    Raises:
+        The last caught exception when all retries are exhausted.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1 + max_retries):
+        try:
+            return await fn(*args, **kwargs)
+        except retry_on as exc:
+            last_exc = exc
+            if attempt >= max_retries:
+                break
+            wait = min(base_delay * (2 ** attempt), max_delay)
+            logger.warning(
+                "Async retry %d/%d after %.1fs – %s: %s",
+                attempt + 1,
+                max_retries,
+                wait,
+                type(exc).__name__,
+                exc,
+            )
+            await asyncio.sleep(wait)
+    raise last_exc  # type: ignore[misc]

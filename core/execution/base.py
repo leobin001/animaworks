@@ -403,6 +403,14 @@ class BaseExecutor(ABC):
             return 300
         return 600
 
+    def _resolve_num_retries(self) -> int:
+        """Resolve LLM API retry count from ``config.server.llm_num_retries``."""
+        try:
+            from core.config import load_config
+            return load_config().server.llm_num_retries
+        except Exception:
+            return 3
+
     def _check_interrupted(self) -> bool:
         """Return True if the interrupt event has been set.
 

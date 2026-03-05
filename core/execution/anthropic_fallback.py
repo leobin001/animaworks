@@ -17,6 +17,7 @@ Handles mid-conversation context monitoring and session chaining.
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager as _acm
 from dataclasses import asdict
 from functools import partial
 from pathlib import Path
@@ -76,6 +77,43 @@ def _extract_tool_uses_from_messages(messages: list[dict]) -> list[dict]:
                             )
                         tool_uses[-1]["result"] = str(result_content)[:500]
     return tool_uses[-20:]  # Keep last 20 entries
+
+
+@_acm
+async def _stream_with_retry(client, stream_kwargs, max_retries):
+    """Open Anthropic streaming connection with retry on transient errors.
+
+    Retries only connection establishment (429/5xx).  Once streaming begins,
+    errors are re-raised immediately (handled by the upper
+    StreamDisconnectedError layer).
+    """
+    import anthropic as _anth
+
+    _retry_on = (
+        _anth.RateLimitError,
+        _anth.APIConnectionError,
+        _anth.InternalServerError,
+    )
+    _entered = False
+    for attempt in range(1 + max_retries):
+        try:
+            async with client.messages.stream(**stream_kwargs) as stream:
+                _entered = True
+                yield stream
+                return
+        except _retry_on as exc:
+            if _entered or attempt >= max_retries:
+                raise
+            wait = min(1.0 * (2 ** attempt), 60.0)
+            logger.warning(
+                "Stream connect retry %d/%d after %.1fs – %s: %s",
+                attempt + 1,
+                max_retries,
+                wait,
+                type(exc).__name__,
+                exc,
+            )
+            await asyncio.sleep(wait)
 
 
 class AnthropicFallbackExecutor(BaseExecutor):
@@ -235,7 +273,19 @@ class AnthropicFallbackExecutor(BaseExecutor):
                 create_kwargs["tools"] = tools
 
             try:
-                response = await client.messages.create(**create_kwargs)
+                import anthropic as _anthropic
+                from core.tools._retry import async_retry_with_backoff
+
+                response = await async_retry_with_backoff(
+                    client.messages.create,
+                    **create_kwargs,
+                    max_retries=self._resolve_num_retries(),
+                    retry_on=(
+                        _anthropic.RateLimitError,
+                        _anthropic.APIConnectionError,
+                        _anthropic.InternalServerError,
+                    ),
+                )
             except LLMAPIError:
                 raise
             except Exception as e:
@@ -466,7 +516,7 @@ class AnthropicFallbackExecutor(BaseExecutor):
                     stream_kwargs["tools"] = tools
 
                 _in_thinking_block = False
-                async with client.messages.stream(**stream_kwargs) as stream:
+                async with _stream_with_retry(client, stream_kwargs, self._resolve_num_retries()) as stream:
                     async for event in stream:
                         # Text deltas — forward immediately
                         if event.type == "text":
