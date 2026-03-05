@@ -82,6 +82,7 @@ class KnowledgeGraph:
         knowledge_dir: Path,
         *,
         memory_dirs: dict[str, Path] | None = None,
+        implicit_link_threshold: float = IMPLICIT_LINK_THRESHOLD,
     ) -> nx.DiGraph:
         """Build knowledge graph from memory files.
 
@@ -99,6 +100,7 @@ class KnowledgeGraph:
         """
         logger.info("Building knowledge graph for anima=%s", anima_name)
 
+        self._implicit_link_threshold = implicit_link_threshold
         graph = nx.DiGraph()
 
         sources: dict[str, Path] = {}
@@ -240,14 +242,15 @@ class KnowledgeGraph:
                     top_k=5,
                 )
 
+                threshold = getattr(self, "_implicit_link_threshold", IMPLICIT_LINK_THRESHOLD)
                 for result in results:
                     target_node = self._match_result_to_node(
-                        graph, result.id, result.score,
+                        graph, result.document.id, result.score,
                     )
                     if (
                         target_node is not None
                         and target_node != node_id
-                        and result.score >= IMPLICIT_LINK_THRESHOLD
+                        and result.score >= threshold
                         and not graph.has_edge(node_id, target_node)
                     ):
                         graph.add_edge(
@@ -475,14 +478,15 @@ class KnowledgeGraph:
                     top_k=5,
                 )
 
+                threshold = getattr(self, "_implicit_link_threshold", IMPLICIT_LINK_THRESHOLD)
                 for result in results:
                     target_node = self._match_result_to_node(
-                        self.graph, result.id, result.score,
+                        self.graph, result.document.id, result.score,
                     )
                     if (
                         target_node is not None
                         and target_node != node_id
-                        and result.score >= IMPLICIT_LINK_THRESHOLD
+                        and result.score >= threshold
                         and not self.graph.has_edge(node_id, target_node)
                     ):
                         self.graph.add_edge(

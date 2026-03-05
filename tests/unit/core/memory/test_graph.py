@@ -18,7 +18,7 @@ from core.memory.rag.graph import KnowledgeGraph
 class MockVectorStore:
     """Mock vector store for testing."""
 
-    def query(self, collection, embedding, top_k):
+    def query(self, collection, embedding, top_k, filter_metadata=None):
         """Mock query method."""
         from core.memory.rag.store import Document, SearchResult
 
@@ -40,6 +40,36 @@ class MockVectorStore:
             )
             for i in range(min(3, top_k))
         ]
+
+
+class MockVectorStoreMatchingNodes:
+    """Mock vector store that returns doc_ids matching actual node stems."""
+
+    def __init__(self, stems: list[str] | None = None):
+        self._stems = stems or ["file1", "file2", "file3"]
+
+    def query(self, collection, embedding, top_k, filter_metadata=None):
+        from core.memory.rag.store import Document, SearchResult
+
+        if "_episodes" in collection:
+            prefix = "episodes"
+        else:
+            prefix = "knowledge"
+
+        results = []
+        for i, stem in enumerate(self._stems[:top_k]):
+            results.append(
+                SearchResult(
+                    document=Document(
+                        id=f"anima/{prefix}/{stem}.md#0",
+                        content=f"Content of {stem}",
+                        embedding=embedding,
+                        metadata={"source_file": f"{prefix}/{stem}.md"},
+                    ),
+                    score=0.85 - i * 0.02,
+                )
+            )
+        return results
 
 
 class MockIndexer:
@@ -123,6 +153,8 @@ def test_graph_construction(temp_knowledge_dir):
     # Check edge attributes
     assert graph["file1"]["file2"]["link_type"] == "explicit"
     assert graph["file1"]["file2"]["similarity"] == 1.0
+
+    # Verify explicit edges exist (implicit links depend on mock doc_ids matching nodes)
 
 
 def test_personalized_pagerank(temp_knowledge_dir):
@@ -619,3 +651,177 @@ def test_knowledge_only_backward_compat(temp_knowledge_dir):
     assert "file2" in graph
     assert "file3" in graph
     assert graph.nodes["file1"]["memory_type"] == "knowledge"
+
+
+def test_implicit_links_created(temp_knowledge_dir):
+    """Test that implicit links are created when vector results match nodes."""
+    vector_store = MockVectorStoreMatchingNodes(["file1", "file2", "file3"])
+    indexer = MockIndexer()
+
+    graph_builder = KnowledgeGraph(vector_store, indexer)
+    graph_builder.build_graph("test_anima", temp_knowledge_dir)
+
+    implicit_edges = [
+        (u, v, d)
+        for u, v, d in graph_builder.graph.edges(data=True)
+        if d["link_type"] == "implicit"
+    ]
+    assert len(implicit_edges) > 0, (
+        "Expected at least one implicit link from vector similarity"
+    )
+
+
+def test_implicit_links_in_multi_type_graph(temp_anima_dir):
+    """Test that implicit links are created across memory types."""
+    knowledge_dir = temp_anima_dir / "knowledge"
+    episodes_dir = temp_anima_dir / "episodes"
+
+    vector_store = MockVectorStoreMatchingNodes(["file1", "file2", "2026-03-01", "2026-03-02"])
+    indexer = MockIndexer()
+
+    graph_builder = KnowledgeGraph(vector_store, indexer)
+    graph_builder.build_graph(
+        "test_anima", knowledge_dir,
+        memory_dirs={"episodes": episodes_dir},
+    )
+
+    implicit_edges = [
+        (u, v, d)
+        for u, v, d in graph_builder.graph.edges(data=True)
+        if d["link_type"] == "implicit"
+    ]
+    assert len(implicit_edges) > 0, (
+        "Expected implicit links from vector similarity in multi-type graph"
+    )
+
+
+def test_build_graph_with_custom_threshold(temp_knowledge_dir):
+    """Test that implicit_link_threshold parameter controls link creation."""
+    vector_store = MockVectorStore()
+    indexer = MockIndexer()
+
+    # Very high threshold — should create fewer (or zero) implicit links
+    graph_builder_strict = KnowledgeGraph(vector_store, indexer)
+    graph_strict = graph_builder_strict.build_graph(
+        "test_anima", temp_knowledge_dir,
+        implicit_link_threshold=0.99,
+    )
+    implicit_strict = sum(
+        1 for _, _, d in graph_strict.edges(data=True) if d["link_type"] == "implicit"
+    )
+
+    # Low threshold — should create more implicit links
+    graph_builder_lax = KnowledgeGraph(vector_store, indexer)
+    graph_lax = graph_builder_lax.build_graph(
+        "test_anima", temp_knowledge_dir,
+        implicit_link_threshold=0.50,
+    )
+    implicit_lax = sum(
+        1 for _, _, d in graph_lax.edges(data=True) if d["link_type"] == "implicit"
+    )
+
+    assert implicit_lax >= implicit_strict
+
+
+# ── Retriever C方式 tests ──────────────────────────────────────────
+
+
+class _MockConfig:
+    """Minimal mock for AnimaWorksConfig."""
+
+    class _RAG:
+        enable_spreading_activation = True
+        spreading_memory_types = ["knowledge", "episodes"]
+        implicit_link_threshold = 0.75
+        max_graph_hops = 2
+
+    rag = _RAG()
+
+
+class _MockConfigDisabled:
+    """Config with spreading activation disabled."""
+
+    class _RAG:
+        enable_spreading_activation = False
+        spreading_memory_types = ["knowledge", "episodes"]
+        implicit_link_threshold = 0.75
+        max_graph_hops = 2
+
+    rag = _RAG()
+
+
+def test_retriever_none_reads_config_enabled(monkeypatch, temp_knowledge_dir):
+    """C方式: enable_spreading_activation=None reads from config (enabled)."""
+    from core.memory.rag.retriever import MemoryRetriever
+
+    monkeypatch.setattr(
+        "core.memory.rag.retriever.MemoryRetriever._load_config",
+        staticmethod(lambda: _MockConfig()),
+    )
+
+    retriever = MemoryRetriever(MockVectorStore(), MockIndexer(), temp_knowledge_dir)
+
+    results = retriever.search(
+        "test query", "test_anima", memory_type="knowledge", top_k=3,
+        enable_spreading_activation=None,
+    )
+    assert isinstance(results, list)
+
+
+def test_retriever_none_reads_config_disabled(monkeypatch, temp_knowledge_dir):
+    """C方式: enable_spreading_activation=None reads from config (disabled)."""
+    from core.memory.rag.retriever import MemoryRetriever
+
+    monkeypatch.setattr(
+        "core.memory.rag.retriever.MemoryRetriever._load_config",
+        staticmethod(lambda: _MockConfigDisabled()),
+    )
+
+    retriever = MemoryRetriever(MockVectorStore(), MockIndexer(), temp_knowledge_dir)
+
+    results = retriever.search(
+        "test query", "test_anima", memory_type="knowledge", top_k=3,
+        enable_spreading_activation=None,
+    )
+    assert isinstance(results, list)
+    # With spreading disabled, no spreading expansion metadata should be present
+    for r in results:
+        assert r.metadata.get("activation") != "spreading"
+
+
+def test_retriever_explicit_true_overrides_config(monkeypatch, temp_knowledge_dir):
+    """C方式: enable_spreading_activation=True overrides config."""
+    from core.memory.rag.retriever import MemoryRetriever
+
+    monkeypatch.setattr(
+        "core.memory.rag.retriever.MemoryRetriever._load_config",
+        staticmethod(lambda: _MockConfigDisabled()),
+    )
+
+    retriever = MemoryRetriever(MockVectorStore(), MockIndexer(), temp_knowledge_dir)
+
+    results = retriever.search(
+        "test query", "test_anima", memory_type="knowledge", top_k=3,
+        enable_spreading_activation=True,
+    )
+    assert isinstance(results, list)
+
+
+def test_retriever_explicit_false_overrides_config(monkeypatch, temp_knowledge_dir):
+    """C方式: enable_spreading_activation=False overrides config."""
+    from core.memory.rag.retriever import MemoryRetriever
+
+    monkeypatch.setattr(
+        "core.memory.rag.retriever.MemoryRetriever._load_config",
+        staticmethod(lambda: _MockConfig()),
+    )
+
+    retriever = MemoryRetriever(MockVectorStore(), MockIndexer(), temp_knowledge_dir)
+
+    results = retriever.search(
+        "test query", "test_anima", memory_type="knowledge", top_k=3,
+        enable_spreading_activation=False,
+    )
+    assert isinstance(results, list)
+    for r in results:
+        assert r.metadata.get("activation") != "spreading"
