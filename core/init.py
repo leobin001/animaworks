@@ -282,6 +282,7 @@ def ensure_runtime_dir(*, skip_animas: bool = False) -> Path:
         except Exception:
             logger.exception("Person-to-Anima migration failed")
         _maybe_migrate_config(data_dir)
+        _sync_shared_templates(data_dir)
         logger.debug("Runtime directory already initialized: %s", data_dir)
         return data_dir
 
@@ -321,6 +322,47 @@ def ensure_runtime_dir(*, skip_animas: bool = False) -> Path:
 
     logger.info("Runtime directory initialized: %s", data_dir)
     return data_dir
+
+
+# Directories synced incrementally on every startup (new entries only).
+_INCREMENTAL_SYNC_DIRS = {"common_skills", "common_knowledge"}
+
+
+def _sync_shared_templates(data_dir: Path) -> None:
+    """Incrementally sync new common_skills and common_knowledge from templates.
+
+    Only copies entries (directories/files) that do not yet exist in the
+    runtime data directory, preserving any user modifications to existing
+    entries.  Called on every startup so that version upgrades automatically
+    deliver new skill files without requiring ``animaworks init``.
+    """
+    from core.paths import _get_locale
+
+    locale = _get_locale()
+    locale_dir: Path | None = None
+    for loc in (locale, "en", "ja"):
+        candidate = TEMPLATES_DIR / loc
+        if candidate.exists():
+            locale_dir = candidate
+            break
+    if locale_dir is None:
+        return
+
+    for dir_name in _INCREMENTAL_SYNC_DIRS:
+        src_dir = locale_dir / dir_name
+        if not src_dir.is_dir():
+            continue
+        dst_dir = data_dir / dir_name
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        for entry in src_dir.iterdir():
+            target = dst_dir / entry.name
+            if target.exists():
+                continue
+            if entry.is_dir():
+                shutil.copytree(entry, target)
+            else:
+                shutil.copy2(entry, target)
+            logger.info("Synced new template %s → %s", entry.name, dir_name)
 
 
 def _copy_infrastructure(data_dir: Path) -> None:
