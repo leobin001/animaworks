@@ -248,11 +248,11 @@ class ToolHandler(
         self._on_message_sent = fn
 
     @property
-    def on_schedule_changed(self) -> Callable[[str], Any] | None:
+    def on_schedule_changed(self) -> Callable[[str], None] | None:
         return self._on_schedule_changed
 
     @on_schedule_changed.setter
-    def on_schedule_changed(self, fn: Callable[[str], Any] | None) -> None:
+    def on_schedule_changed(self, fn: Callable[[str], None] | None) -> None:
         self._on_schedule_changed = fn
 
     def drain_notifications(self) -> list[dict[str, Any]]:

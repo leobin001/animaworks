@@ -159,7 +159,7 @@ class CycleResult(BaseModel):
     session_chained: bool = False
     total_turns: int = 0
     tool_call_records: list[ToolCallRecordDict] = Field(default_factory=list)
-    images: list[ImageData] = Field(default_factory=list)
+    images: list[dict[str, str]] = Field(default_factory=list)
     usage: dict[str, int] | None = None
 
 
