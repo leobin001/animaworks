@@ -125,7 +125,7 @@ def _find_server_pid_by_process() -> int | None:
     return None
 
 
-def _stop_server(timeout: int = 10) -> bool:
+def _stop_server(timeout: int = 10, *, force: bool = False) -> bool:
     """Send SIGTERM to the running server and wait for it to exit.
 
     First tries the PID file.  If the file is missing, falls back to
@@ -134,6 +134,8 @@ def _stop_server(timeout: int = 10) -> bool:
 
     Args:
         timeout: Maximum seconds to wait before reporting failure.
+        force: If True, escalate to SIGKILL after SIGTERM timeout and
+            also kill orphan runner processes.
 
     Returns:
         True if the server was stopped (or was not running), False if
@@ -142,16 +144,26 @@ def _stop_server(timeout: int = 10) -> bool:
     pid = _read_pid()
 
     if pid is None:
-        # Fallback: scan processes by command pattern
         pid = _find_server_pid_by_process()
         if pid is None:
-            print("No PID file found and no server process detected. Server is not running.")
+            if force:
+                orphans = _kill_orphan_runners()
+                if orphans:
+                    print(f"Killed {orphans} orphan runner process(es).")
+                else:
+                    print("No PID file found and no server process detected. Server is not running.")
+            else:
+                print("No PID file found and no server process detected. Server is not running.")
             return True
         print(f"PID file missing — found server process by scanning (pid={pid}).")
     else:
         if not _is_process_alive(pid):
             print(f"Stale PID file (pid={pid}). Server is not running. Cleaning up.")
             _remove_pid_file()
+            if force:
+                orphans = _kill_orphan_runners()
+                if orphans:
+                    print(f"Killed {orphans} orphan runner process(es).")
             return True
 
     print(f"Stopping server (pid={pid})...")
@@ -160,6 +172,10 @@ def _stop_server(timeout: int = 10) -> bool:
     except ProcessLookupError:
         print("Server already exited.")
         _remove_pid_file()
+        if force:
+            orphans = _kill_orphan_runners()
+            if orphans:
+                print(f"Killed {orphans} orphan runner process(es).")
         return True
     except PermissionError:
         print(f"Error: Permission denied sending signal to pid={pid}.")
@@ -170,11 +186,48 @@ def _stop_server(timeout: int = 10) -> bool:
         if not _is_process_alive(pid):
             print("Server stopped.")
             _remove_pid_file()
+            if force:
+                orphans = _kill_orphan_runners()
+                if orphans:
+                    print(f"Killed {orphans} orphan runner process(es).")
             return True
         time.sleep(0.2)
 
-    print(f"Error: Server (pid={pid}) did not stop within {timeout}s.")
-    return False
+    if not force:
+        print(f"Error: Server (pid={pid}) did not stop within {timeout}s.")
+        return False
+
+    # Force mode: escalate to SIGKILL
+    print(f"Server (pid={pid}) did not stop within {timeout}s. Sending SIGKILL...")
+    try:
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        print(f"Error: Permission denied sending SIGKILL to pid={pid}.")
+        return False
+
+    kill_deadline = time.monotonic() + 3
+    while time.monotonic() < kill_deadline:
+        if not _is_process_alive(pid):
+            break
+        time.sleep(0.1)
+
+    if _is_process_alive(pid):
+        print(f"Error: Server (pid={pid}) still alive after SIGKILL.")
+        return False
+
+    print("Server force-killed.")
+    _remove_pid_file()
+
+    orphans = _kill_orphan_runners()
+    if orphans:
+        print(f"Killed {orphans} orphan runner process(es).")
+
+    return True
 
 
 # ── Orphan runner cleanup ─────────────────────────────────
@@ -423,7 +476,8 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
 def cmd_stop(args: argparse.Namespace) -> None:
     """Stop the running AnimaWorks server."""
-    if not _stop_server():
+    force = getattr(args, "force", False)
+    if not _stop_server(force=force):
         sys.exit(1)
 
 
@@ -447,7 +501,8 @@ def _clear_pycache() -> int:
 
 def cmd_restart(args: argparse.Namespace) -> None:
     """Restart the AnimaWorks server (stop then start)."""
-    if not _stop_server():
+    force = getattr(args, "force", False)
+    if not _stop_server(force=force):
         print("Error: Cannot restart — failed to stop the running server.")
         sys.exit(1)
     removed = _clear_pycache()

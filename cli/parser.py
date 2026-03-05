@@ -112,6 +112,10 @@ def cli_main() -> None:
 
     # ── Stop ──────────────────────────────────────────────
     p_stop = sub.add_parser("stop", help="Stop the running server")
+    p_stop.add_argument(
+        "--force", action="store_true",
+        help="Force stop: SIGKILL after SIGTERM timeout, also kill orphan runners",
+    )
     p_stop.set_defaults(func=_lazy_stop)
 
     # ── Reset ─────────────────────────────────────────────
@@ -131,6 +135,10 @@ def cli_main() -> None:
     p_restart.add_argument(
         "--foreground", "-f", action="store_true",
         help="Run in foreground with log output (default: daemonize)",
+    )
+    p_restart.add_argument(
+        "--force", action="store_true",
+        help="Force stop: SIGKILL after SIGTERM timeout, also kill orphan runners",
     )
     p_restart.set_defaults(func=_lazy_restart)
 
