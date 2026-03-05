@@ -107,7 +107,7 @@ class TestSendMessageToAlias:
 
         data = json.loads(result)
         assert data["status"] == "sent"
-        mock_slack.assert_called_once_with("U0TEST000001", "hello", "sakura")
+        mock_slack.assert_called_once_with("U0TEST000001", "hello", "sakura", "sakura")
 
     def test_send_to_internal_anima_unchanged(
         self, make_anima, animas_dir, config_with_aliases,
