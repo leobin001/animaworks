@@ -35,6 +35,8 @@ const _positions = new Map();
 const _nodeData = new Map();
 const _cardEls = new Map();
 let _draggingCard = null;
+let _didDrag = false;
+let _resizeRafId = null;
 
 let _panActive = false;
 let _panStartX = 0;
@@ -130,11 +132,22 @@ function _computeTreeLayout(roots, viewportWidth) {
 
 // ── localStorage Persistence ──────────────────────
 
+function _isValidPos(v) {
+  return v && typeof v === "object" && typeof v.x === "number" && typeof v.y === "number"
+    && Number.isFinite(v.x) && Number.isFinite(v.y);
+}
+
 function _loadPositions() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return new Map(Object.entries(JSON.parse(raw)));
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const map = new Map();
+    for (const [k, v] of Object.entries(parsed)) {
+      if (_isValidPos(v)) map.set(k, { x: v.x, y: v.y });
+    }
+    return map.size ? map : null;
   } catch {
     return null;
   }
@@ -150,9 +163,21 @@ function _persistPositions() {
 
 // ── SVG Connections ──────────────────────
 
+function _getCardDimensions() {
+  const sample = _cardEls.values().next().value;
+  if (sample) {
+    const w = sample.offsetWidth;
+    const h = sample.offsetHeight;
+    if (w > 0 && h > 0) return { w, h };
+  }
+  return { w: CARD_W, h: CARD_H };
+}
+
 function _updateConnections() {
   if (!_svgLayer) return;
   _svgLayer.innerHTML = "";
+
+  const { w: cardW, h: cardH } = _getCardDimensions();
 
   for (const [name, node] of _nodeData) {
     if (!node.supervisor) continue;
@@ -160,9 +185,9 @@ function _updateConnections() {
     const childPos = _positions.get(name);
     if (!parentPos || !childPos) continue;
 
-    const x1 = parentPos.x + CARD_W / 2;
-    const y1 = parentPos.y + CARD_H;
-    const x2 = childPos.x + CARD_W / 2;
+    const x1 = parentPos.x + cardW / 2;
+    const y1 = parentPos.y + cardH;
+    const x2 = childPos.x + cardW / 2;
     const y2 = childPos.y;
     const midY = (y1 + y2) / 2;
 
@@ -177,12 +202,14 @@ function _updateConnections() {
 
 function _setupDrag(cardEl, name) {
   let dragging = false;
+  let moved = false;
   let startX, startY, cardStartX, cardStartY;
 
   cardEl.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     if (e.target.closest(".org-card-expand")) return;
     dragging = true;
+    moved = false;
     _draggingCard = name;
     cardEl.setPointerCapture(e.pointerId);
     startX = e.clientX;
@@ -205,6 +232,7 @@ function _setupDrag(cardEl, name) {
     if (!dragging) return;
     const dx = e.clientX - startX;
     const dy = e.clientY - startY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
     const x = cardStartX + dx;
     const y = cardStartY + dy;
     cardEl.style.left = `${x}px`;
@@ -216,6 +244,7 @@ function _setupDrag(cardEl, name) {
   cardEl.addEventListener("pointerup", () => {
     if (!dragging) return;
     dragging = false;
+    if (moved) _didDrag = true;
     _draggingCard = null;
     cardEl.classList.remove("org-card--dragging");
     _persistPositions();
@@ -303,7 +332,10 @@ function _renderKpiBar() {
     return !["idle", "sleeping", "stopped", "not_found", "disabled"].includes(String(s).toLowerCase());
   }).length;
   const total = animas.length;
-  const errors = animas.filter(a => String(a.status).includes("error")).length;
+  const errors = animas.filter(a => {
+    const st = typeof a.status === "object" ? (a.status?.state ?? a.status?.status) : a.status;
+    return String(st || "").toLowerCase().includes("error");
+  }).length;
 
   _kpiBar.innerHTML = `
     <div class="org-kpi-card">
@@ -435,6 +467,7 @@ export async function initOrgDashboard(container, animas, { onNodeClick } = {}) 
   _setupPan(_viewport);
 
   container.addEventListener("click", (e) => {
+    if (_didDrag) { _didDrag = false; return; }
     const card = e.target.closest(".org-card");
     if (!card) return;
     const name = card.dataset.name;
@@ -453,8 +486,12 @@ export async function initOrgDashboard(container, animas, { onNodeClick } = {}) 
 }
 
 function _onResize() {
-  _resizeSvg();
-  _updateConnections();
+  if (_resizeRafId) cancelAnimationFrame(_resizeRafId);
+  _resizeRafId = requestAnimationFrame(() => {
+    _resizeRafId = null;
+    _resizeSvg();
+    _updateConnections();
+  });
 }
 
 export function disposeOrgDashboard() {
@@ -472,7 +509,9 @@ export function disposeOrgDashboard() {
   _kpiBar = null;
   _onNodeClick = null;
   _draggingCard = null;
+  _didDrag = false;
   _panActive = false;
+  if (_resizeRafId) { cancelAnimationFrame(_resizeRafId); _resizeRafId = null; }
 }
 
 export function updateAnimaStatus(name, status) {

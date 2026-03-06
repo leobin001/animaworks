@@ -184,6 +184,32 @@ class TestOrgDashboardCanvasPan:
         assert "scrollTop" in self.src
 
 
+class TestOrgDashboardReviewFixes:
+    """Verify review feedback fixes are applied."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.src = ORG_DASHBOARD_JS.read_text(encoding="utf-8")
+
+    def test_localstorage_position_validation(self):
+        assert "_isValidPos" in self.src
+        assert "Number.isFinite" in self.src
+
+    def test_kpi_errors_handles_object_status(self):
+        assert "a.status?.state" in self.src or "a.status?.status" in self.src
+
+    def test_drag_click_prevention(self):
+        assert "_didDrag" in self.src
+
+    def test_resize_debounced(self):
+        assert "cancelAnimationFrame" in self.src
+        assert "_resizeRafId" in self.src
+
+    def test_connection_uses_actual_card_dimensions(self):
+        assert "_getCardDimensions" in self.src
+        assert "offsetWidth" in self.src
+
+
 # ── CSS Canvas Styles ──────────────────────
 
 class TestOrgDashboardCssCanvasStyles:
