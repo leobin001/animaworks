@@ -376,9 +376,7 @@ def create_system_router() -> APIRouter:
                 pass
             return (pend, prog)
 
-        results = await asyncio.gather(
-            *(asyncio.to_thread(_count_tasks, n) for n in anima_names)
-        )
+        results = await asyncio.gather(*(asyncio.to_thread(_count_tasks, n) for n in anima_names))
         pending = sum(r[0] for r in results)
         in_progress = sum(r[1] for r in results)
         return {"pending": pending, "in_progress": in_progress, "total_active": pending + in_progress}
