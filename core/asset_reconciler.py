@@ -519,9 +519,12 @@ async def _synthesize_prompt_via_llm(
         system_prompt_name = "fragments/asset_synthesis_system"
         user_prompt_key = "asset_reconciler.llm_user_prompt"
 
-    api_key = model_config.api_key or os.environ.get(model_config.api_key_env)
+    from core.memory._llm_utils import get_consolidation_llm_kwargs
+    llm_kw = get_consolidation_llm_kwargs()
+    llm_model = llm_kw["model"]
+    api_key = llm_kw.get("api_key") or os.environ.get(model_config.api_key_env)
     kwargs: dict[str, Any] = {
-        "model": model_config.model,
+        "model": llm_model,
         "messages": [
             {"role": "system", "content": load_prompt(system_prompt_name)},
             {

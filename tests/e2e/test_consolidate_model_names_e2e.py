@@ -8,7 +8,7 @@ from __future__ import annotations
 
 Verifies that all model= parameters that previously defaulted to
 ``"anthropic/claude-sonnet-4-6"`` now default to ``""`` (empty string)
-and correctly fall back to ``ConsolidationConfig().llm_model`` or
+and correctly fall back to ``get_consolidation_llm_kwargs()["model"]`` or
 ``AnimaDefaults().model`` at runtime.
 
 Modified files under test:
@@ -202,7 +202,7 @@ class TestNoHardcodedModelDefaults:
         )
 
     def test_fallback_pattern_present(self):
-        """Verify that 'if not model:' + ConsolidationConfig fallback is used."""
+        """Verify that 'if not model:' + get_consolidation_llm_kwargs() fallback is used."""
         root = self._project_root()
 
         # Files that should have the fallback pattern (all except context.py)
@@ -217,7 +217,7 @@ class TestNoHardcodedModelDefaults:
         ]
 
         fallback_pattern = re.compile(
-            r"if not model:.*?ConsolidationConfig\(\)\.llm_model",
+            r"if not model:.*?get_consolidation_llm_kwargs\s*\(\s*\)\s*\[\s*[\"']model[\"']\s*\]",
             re.DOTALL,
         )
 
@@ -231,7 +231,7 @@ class TestNoHardcodedModelDefaults:
                 missing.append(relpath)
 
         assert not missing, (
-            "Expected 'if not model: ... ConsolidationConfig().llm_model' in:\n"
+            "Expected 'if not model: ... get_consolidation_llm_kwargs()[\"model\"]' in:\n"
             + "\n".join(missing)
         )
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 """Unit tests for model-name consolidation (hardcoded defaults → config fallback).
 
 Verifies that all functions changed in the model-name consolidation refactor:
-  - Fall back to ``ConsolidationConfig().llm_model`` when called with the
+  - Fall back to ``get_consolidation_llm_kwargs()["model"]`` when called with the
     default empty-string model parameter.
   - Honour an explicit model string when one is provided.
   - ``ContextTracker`` falls back to ``AnimaDefaults().model``.
@@ -96,7 +96,7 @@ class TestProceduralDistillerModelDefault:
 
     @pytest.mark.asyncio
     async def test_classify_and_distill_default_model(self, distiller):
-        """classify_and_distill(model='') resolves to ConsolidationConfig().llm_model."""
+        """classify_and_distill(model='') resolves to get_consolidation_llm_kwargs()['model']."""
         mock_resp = _make_mock_llm_response(
             "## knowledge抽出\n(なし)\n\n## procedure抽出\n(なし)\n"
         )
@@ -120,7 +120,7 @@ class TestProceduralDistillerModelDefault:
 
     @pytest.mark.asyncio
     async def test_distill_procedures_default_model(self, distiller):
-        """distill_procedures(model='') resolves to ConsolidationConfig().llm_model."""
+        """distill_procedures(model='') resolves to get_consolidation_llm_kwargs()['model']."""
         mock_resp = _make_mock_llm_response(
             "## knowledge抽出\n(なし)\n\n## procedure抽出\n(なし)\n"
         )
@@ -145,7 +145,7 @@ class TestProceduralDistillerModelDefault:
 
     @pytest.mark.asyncio
     async def test_weekly_pattern_distill_default_model(self, distiller):
-        """weekly_pattern_distill(model='') resolves to ConsolidationConfig().llm_model."""
+        """weekly_pattern_distill(model='') resolves to get_consolidation_llm_kwargs()['model']."""
         # No activity entries → returns early before LLM call, but model is resolved
         result = await distiller.weekly_pattern_distill()
         assert result["patterns_detected"] == 0
@@ -244,7 +244,7 @@ class TestContradictionDetectorModelDefault:
 
     @pytest.mark.asyncio
     async def test_scan_contradictions_default_model(self, detector):
-        """scan_contradictions(model='') resolves to ConsolidationConfig().llm_model."""
+        """scan_contradictions(model='') resolves to get_consolidation_llm_kwargs()['model']."""
         with patch.object(
             detector, "_find_candidate_pairs", return_value=[],
         ):
@@ -292,7 +292,7 @@ class TestForgettingEngineModelDefault:
 
     @pytest.mark.asyncio
     async def test_neurogenesis_reorganize_default_model(self, forgetter):
-        """neurogenesis_reorganize(model='') resolves to ConsolidationConfig().llm_model."""
+        """neurogenesis_reorganize(model='') resolves to get_consolidation_llm_kwargs()['model']."""
         with patch.object(
             forgetter, "_get_vector_store",
         ) as mock_store, patch.object(
@@ -330,7 +330,7 @@ class TestKnowledgeValidatorModelDefault:
 
     @pytest.mark.asyncio
     async def test_validate_default_model(self, validator):
-        """validate(items, episodes, model='') resolves to ConsolidationConfig().llm_model."""
+        """validate(items, episodes, model='') resolves to get_consolidation_llm_kwargs()['model']."""
         items = [{"content": "test knowledge", "type": "create", "filename": "t.md"}]
         mock_resp = _make_mock_llm_response('{"valid": true, "reason": "ok"}')
         with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:

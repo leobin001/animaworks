@@ -781,8 +781,10 @@ class ConversationMemory:
         """Common LLM helper using litellm for provider-agnostic calls."""
         import litellm
 
-        model = self.model_config.fallback_model or self.model_config.model
-        kwargs: dict[str, Any] = {}
+        from core.memory._llm_utils import get_consolidation_llm_kwargs
+        llm_kw = get_consolidation_llm_kwargs()
+        model = llm_kw.pop("model")
+        kwargs: dict[str, Any] = llm_kw
         self._apply_provider_kwargs(model, kwargs)
         response = cast(
             Any,
