@@ -313,8 +313,28 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "  ... {remaining} more entries omitted",
     },
     "handler.audit_report_footer": {
-        "ja": "─── 統計: 活動{total}件 | ツール{tools} | HB{hb} | エラー{errors} ───",
-        "en": "─── Stats: {total} events | Tools {tools} | HB {hb} | Errors {errors} ───",
+        "ja": "─── 統計: 活動{total}件 | ツール{tools} | HB{hb} | 応答{resp_sent} | DM{dm_sent} | エラー{errors} ───",
+        "en": "─── Stats: {total} events | Tools {tools} | HB {hb} | Responses {resp_sent} | DM {dm_sent} | Errors {errors} ───",
+    },
+    "handler.audit_section_thinking": {
+        "ja": "■ 思考・判断（ハートビート / 振り返り）",
+        "en": "■ Thinking & Decisions (Heartbeat / Reflection)",
+    },
+    "handler.audit_section_responses": {
+        "ja": "■ 対話・応答",
+        "en": "■ Dialogue & Responses",
+    },
+    "handler.audit_section_actions": {
+        "ja": "■ コミュニケーション・タスク",
+        "en": "■ Communication & Tasks",
+    },
+    "handler.audit_section_tool_summary": {
+        "ja": "■ ツール使用サマリー（全{count}回）",
+        "en": "■ Tool Usage Summary ({count} total)",
+    },
+    "handler.audit_section_errors_report": {
+        "ja": "■ エラー",
+        "en": "■ Errors",
     },
     "handler.audit_label_heartbeat": {"ja": "ハートビート完了", "en": "Heartbeat completed"},
     "handler.audit_label_reflection": {"ja": "振り返り", "en": "Reflection"},
