@@ -96,6 +96,7 @@ docs/implemented/*
 !docs/implemented/20260228_provenance-5-mode-s-trust.md
 !docs/implemented/20260228_security-command-injection-fix.md
 !docs/implemented/20260228_security-path-traversal-fix.md
+!docs/implemented/20260307_generic-notion-tool_implemented-20260307.md
 
 # Experiments
 experiments/
