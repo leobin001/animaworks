@@ -35,6 +35,7 @@ tests/evaluation/_experiment_data/
 # ── Private-only (not in public repo) ──────────
 
 # Root files
+.cursorrules
 CLA.md
 CLAUDE.md
 mkdocs.yml
@@ -42,17 +43,10 @@ mkdocs.yml
 # Archive (deprecated code)
 archive/
 
-# Documentation - private sections
-docs/drafts/
-docs/implemented/
-docs/issues/
-docs/legacy/
-docs/records/
-docs/reports/
-docs/research/
-docs/testing/
-docs/index.md
-docs/oss-publication-strategy.md
+# Documentation (only docs/paper/ and docs/release/ are public)
+docs/*
+!docs/paper/
+!docs/release/
 
 # Experiments
 experiments/
