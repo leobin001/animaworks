@@ -1726,6 +1726,11 @@ _STRINGS: dict[str, dict[str, str]] = {
             "200 characters or fewer. Do not use Markdown formatting (headings, bold, lists, code blocks, etc.)]"
         ),
     },
+    # ── supervisor/manager.py ──
+    "supervisor.zombie_reaped": {
+        "ja": "zombie reaper: {count}個の子プロセスを回収しました",
+        "en": "zombie reaper: reaped {count} child process(es)",
+    },
     # ── supervisor/scheduler_manager.py ──
     "scheduler.cron_fallback_description": {
         "ja": "cron.mdの「{task_name}」の指示に従って処理してください。",

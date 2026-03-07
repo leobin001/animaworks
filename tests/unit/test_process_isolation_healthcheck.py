@@ -201,14 +201,15 @@ class TestProcessGroupIsolation:
         self, handle: ProcessHandle,
     ):
         """Verify kill() falls back to process.kill() if killpg raises OSError."""
-        handle.process.wait.return_value = -9
-        handle.process.returncode = -9
+        mock_process = handle.process
+        mock_process.wait.return_value = -9
+        mock_process.returncode = -9
 
         with patch("core.supervisor.process_handle.os.killpg", side_effect=OSError("ESRCH")), \
              patch("core.supervisor.process_handle.os.getpgid", return_value=12345):
             await handle.kill()
 
-            handle.process.kill.assert_called()
+            mock_process.kill.assert_called()
 
     @pytest.mark.asyncio
     async def test_cleanup_uses_killpg(self, handle: ProcessHandle):

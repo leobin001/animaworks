@@ -1,4 +1,4 @@
-"""Unit tests for ProcessHandle bug fixes: ping counter and is_alive IPC detection."""
+"""Unit tests for ProcessHandle: ping counter, is_alive IPC detection, and zombie reap."""
 
 # AnimaWorks - Digital Anima Framework
 # Copyright (C) 2026 AnimaWorks Authors
@@ -7,13 +7,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.supervisor.process_handle import ProcessHandle, ProcessState, ProcessStats
+from core.supervisor.process_handle import ProcessHandle, ProcessState
 
 
 @pytest.fixture
@@ -131,3 +131,93 @@ class TestIsAlive:
         handle.ipc_client = mock_client
 
         assert handle.is_alive() is True
+
+
+class TestCleanupZombieReap:
+    """Tests for _cleanup() explicitly reaping already-exited processes."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_reaps_exited_process(self, handle: ProcessHandle):
+        """_cleanup() should call wait() on already-exited process to prevent zombie."""
+        mock_process = MagicMock(spec=subprocess.Popen)
+        mock_process.poll.return_value = 0
+        mock_process.pid = 12345
+        handle.process = mock_process
+        handle.ipc_client = None
+        handle.socket_path.parent.mkdir(parents=True, exist_ok=True)
+
+        await handle._cleanup()
+
+        mock_process.wait.assert_called_once_with(timeout=1)
+        assert handle.process is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_handles_child_process_error(self, handle: ProcessHandle):
+        """_cleanup() should handle ChildProcessError gracefully (already reaped elsewhere)."""
+        mock_process = MagicMock(spec=subprocess.Popen)
+        mock_process.poll.return_value = 0
+        mock_process.pid = 12345
+        mock_process.wait.side_effect = ChildProcessError("No child processes")
+        handle.process = mock_process
+        handle.ipc_client = None
+        handle.socket_path.parent.mkdir(parents=True, exist_ok=True)
+
+        await handle._cleanup()
+
+        mock_process.wait.assert_called_once_with(timeout=1)
+        assert handle.process is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_kills_alive_process(self, handle: ProcessHandle):
+        """_cleanup() should kill and wait on still-alive process."""
+        mock_process = MagicMock(spec=subprocess.Popen)
+        mock_process.poll.return_value = None
+        mock_process.pid = 12345
+        handle.process = mock_process
+        handle.ipc_client = None
+        handle.socket_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with patch("os.killpg"), patch("os.getpgid", return_value=12345):
+            await handle._cleanup()
+
+        mock_process.wait.assert_called()
+        assert handle.process is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_sets_process_to_none(self, handle: ProcessHandle):
+        """_cleanup() should always set self.process = None."""
+        mock_process = MagicMock(spec=subprocess.Popen)
+        mock_process.poll.return_value = 0
+        mock_process.pid = 12345
+        handle.process = mock_process
+        handle.ipc_client = None
+        handle.socket_path.parent.mkdir(parents=True, exist_ok=True)
+
+        await handle._cleanup()
+
+        assert handle.process is None
+
+
+class TestStartBaseException:
+    """Tests for start() catching BaseException (including CancelledError)."""
+
+    @pytest.mark.asyncio
+    async def test_start_catches_cancelled_error(self, handle: ProcessHandle):
+        """start() should call _cleanup() even when CancelledError is raised."""
+        handle.state = ProcessState.STOPPED
+
+        with (
+            patch.object(handle, "_cleanup", new_callable=AsyncMock) as mock_cleanup,
+            patch("subprocess.Popen") as mock_popen,
+            patch.object(handle, "_wait_for_socket", new_callable=AsyncMock) as mock_wait_socket,
+        ):
+            mock_proc = MagicMock()
+            mock_proc.pid = 99999
+            mock_popen.return_value = mock_proc
+            mock_wait_socket.side_effect = asyncio.CancelledError()
+
+            with pytest.raises(asyncio.CancelledError):
+                await handle.start()
+
+            mock_cleanup.assert_awaited_once()
+            assert handle.state == ProcessState.FAILED
