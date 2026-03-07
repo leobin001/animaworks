@@ -427,9 +427,9 @@ class ContradictionDetector:
             List of detected contradiction pairs with resolution proposals
         """
         if not model:
-            from core.config.models import ConsolidationConfig
+            from core.memory._llm_utils import get_consolidation_llm_kwargs
 
-            model = ConsolidationConfig().llm_model
+            model = get_consolidation_llm_kwargs()["model"]
         logger.info(
             "Starting contradiction scan for anima=%s target=%s",
             self.anima_name,
@@ -553,9 +553,9 @@ class ContradictionDetector:
             Summary dict with counts: superseded, merged, coexisted, errors
         """
         if not model:
-            from core.config.models import ConsolidationConfig
+            from core.memory._llm_utils import get_consolidation_llm_kwargs
 
-            model = ConsolidationConfig().llm_model
+            model = get_consolidation_llm_kwargs()["model"]
         results = {"superseded": 0, "merged": 0, "coexisted": 0, "errors": 0}
 
         for pair in pairs:

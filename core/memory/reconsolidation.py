@@ -125,9 +125,9 @@ class ReconsolidationEngine:
             Dict with counts: "updated", "skipped", "errors".
         """
         if not model:
-            from core.config.models import ConsolidationConfig
+            from core.memory._llm_utils import get_consolidation_llm_kwargs
 
-            model = ConsolidationConfig().llm_model
+            model = get_consolidation_llm_kwargs()["model"]
         results: dict[str, int] = {"updated": 0, "skipped": 0, "errors": 0}
 
         for proc_path in targets:
@@ -210,9 +210,9 @@ class ReconsolidationEngine:
             Dict with counts: ``created``, ``skipped``, ``errors``.
         """
         if not model:
-            from core.config.models import ConsolidationConfig
+            from core.memory._llm_utils import get_consolidation_llm_kwargs
 
-            model = ConsolidationConfig().llm_model
+            model = get_consolidation_llm_kwargs()["model"]
 
         results: dict[str, int] = {"created": 0, "skipped": 0, "errors": 0}
 
@@ -453,9 +453,9 @@ class ReconsolidationEngine:
             Dict with counts: "targets_found", "updated", "skipped", "errors".
         """
         if not model:
-            from core.config.models import ConsolidationConfig
+            from core.memory._llm_utils import get_consolidation_llm_kwargs
 
-            model = ConsolidationConfig().llm_model
+            model = get_consolidation_llm_kwargs()["model"]
         targets = await self.find_knowledge_reconsolidation_targets()
         results: dict[str, Any] = {
             "targets_found": len(targets),

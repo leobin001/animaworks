@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-"""Tests for ConversationMemory._call_llm() provider credential passing."""
+"""Tests for ConversationMemory._call_llm() consolidation model usage.
 
-import os
+Since _call_llm() always uses the consolidation model (via _llm_utils),
+these tests verify that the consolidation model kwargs are correctly
+applied and that anima-specific provider kwargs are NOT injected.
+"""
+
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,11 +30,32 @@ def _make_acompletion_mock() -> AsyncMock:
     return AsyncMock(return_value=resp)
 
 
-class TestCallLlmProviderCredentials:
-    """_call_llm must forward provider-specific kwargs to litellm.acompletion."""
+class TestCallLlmConsolidationModel:
+    """_call_llm always uses the consolidation model, not the anima's model."""
 
     @pytest.mark.asyncio
-    async def test_bedrock_credentials_passed(self, anima_dir: Path) -> None:
+    async def test_uses_consolidation_model(self, anima_dir: Path) -> None:
+        cfg = ModelConfig(model="bedrock/jp.anthropic.claude-sonnet-4-6")
+        from core.memory.conversation import ConversationMemory
+
+        conv = ConversationMemory(anima_dir, cfg)
+        mock_ac = _make_acompletion_mock()
+
+        consolidation_kwargs = {"model": "anthropic/claude-sonnet-4-6", "api_key": "test-key"}
+        with (
+            patch("core.memory._llm_utils.get_consolidation_llm_kwargs", return_value=consolidation_kwargs),
+            patch("litellm.acompletion", mock_ac),
+        ):
+            await conv._call_llm("sys", "user msg")
+
+        mock_ac.assert_called_once()
+        kw = mock_ac.call_args
+        assert kw.kwargs["model"] == "anthropic/claude-sonnet-4-6"
+        assert kw.kwargs["api_key"] == "test-key"
+
+    @pytest.mark.asyncio
+    async def test_no_anima_provider_kwargs_injected(self, anima_dir: Path) -> None:
+        """Anima-specific provider kwargs (bedrock, azure, vertex) are not applied."""
         cfg = ModelConfig(
             model="bedrock/jp.anthropic.claude-sonnet-4-6",
             extra_keys={
@@ -44,62 +69,11 @@ class TestCallLlmProviderCredentials:
         conv = ConversationMemory(anima_dir, cfg)
         mock_ac = _make_acompletion_mock()
 
-        with patch("litellm.acompletion", mock_ac):
-            await conv._call_llm("sys", "user msg")
-
-        mock_ac.assert_called_once()
-        kw = mock_ac.call_args
-        assert kw.kwargs["aws_access_key_id"] == "AKIATEST"
-        assert kw.kwargs["aws_secret_access_key"] == "secret123"
-        assert kw.kwargs["aws_region_name"] == "ap-northeast-1"
-
-    @pytest.mark.asyncio
-    async def test_azure_api_version_passed(self, anima_dir: Path) -> None:
-        cfg = ModelConfig(
-            model="azure/gpt-4.1-mini",
-            extra_keys={"api_version": "2024-12-01-preview"},
-        )
-        from core.memory.conversation import ConversationMemory
-
-        conv = ConversationMemory(anima_dir, cfg)
-        mock_ac = _make_acompletion_mock()
-
-        with patch("litellm.acompletion", mock_ac):
-            await conv._call_llm("sys", "user msg")
-
-        kw = mock_ac.call_args
-        assert kw.kwargs["api_version"] == "2024-12-01-preview"
-
-    @pytest.mark.asyncio
-    async def test_vertex_credentials_passed(self, anima_dir: Path) -> None:
-        cfg = ModelConfig(
-            model="vertex_ai/gemini-2.5-flash",
-            extra_keys={
-                "vertex_project": "my-project",
-                "vertex_location": "us-central1",
-            },
-        )
-        from core.memory.conversation import ConversationMemory
-
-        conv = ConversationMemory(anima_dir, cfg)
-        mock_ac = _make_acompletion_mock()
-
-        with patch("litellm.acompletion", mock_ac):
-            await conv._call_llm("sys", "user msg")
-
-        kw = mock_ac.call_args
-        assert kw.kwargs["vertex_project"] == "my-project"
-        assert kw.kwargs["vertex_location"] == "us-central1"
-
-    @pytest.mark.asyncio
-    async def test_no_extra_kwargs_for_generic_model(self, anima_dir: Path) -> None:
-        cfg = ModelConfig(model="claude-sonnet-4-6")
-        from core.memory.conversation import ConversationMemory
-
-        conv = ConversationMemory(anima_dir, cfg)
-        mock_ac = _make_acompletion_mock()
-
-        with patch("litellm.acompletion", mock_ac):
+        consolidation_kwargs = {"model": "anthropic/claude-sonnet-4-6"}
+        with (
+            patch("core.memory._llm_utils.get_consolidation_llm_kwargs", return_value=consolidation_kwargs),
+            patch("litellm.acompletion", mock_ac),
+        ):
             await conv._call_llm("sys", "user msg")
 
         kw = mock_ac.call_args
@@ -110,44 +84,20 @@ class TestCallLlmProviderCredentials:
             assert key not in kw.kwargs
 
     @pytest.mark.asyncio
-    async def test_bedrock_env_fallback(self, anima_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAENV")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "envsecret")
-        monkeypatch.setenv("AWS_REGION_NAME", "us-east-1")
-
-        cfg = ModelConfig(model="bedrock/anthropic.claude-3-haiku", extra_keys={})
+    async def test_consolidation_model_without_api_key(self, anima_dir: Path) -> None:
+        cfg = ModelConfig(model="claude-sonnet-4-6")
         from core.memory.conversation import ConversationMemory
 
         conv = ConversationMemory(anima_dir, cfg)
         mock_ac = _make_acompletion_mock()
 
-        with patch("litellm.acompletion", mock_ac):
+        consolidation_kwargs = {"model": "anthropic/claude-sonnet-4-6"}
+        with (
+            patch("core.memory._llm_utils.get_consolidation_llm_kwargs", return_value=consolidation_kwargs),
+            patch("litellm.acompletion", mock_ac),
+        ):
             await conv._call_llm("sys", "user msg")
 
         kw = mock_ac.call_args
-        assert kw.kwargs["aws_access_key_id"] == "AKIAENV"
-        assert kw.kwargs["aws_secret_access_key"] == "envsecret"
-        assert kw.kwargs["aws_region_name"] == "us-east-1"
-
-    @pytest.mark.asyncio
-    async def test_fallback_model_prefix_used(self, anima_dir: Path) -> None:
-        """When fallback_model is set, its prefix determines provider kwargs."""
-        cfg = ModelConfig(
-            model="claude-sonnet-4-6",
-            fallback_model="bedrock/anthropic.claude-3-haiku",
-            extra_keys={
-                "aws_access_key_id": "AKIAFALLBACK",
-                "aws_secret_access_key": "fbsecret",
-                "aws_region_name": "eu-west-1",
-            },
-        )
-        from core.memory.conversation import ConversationMemory
-
-        conv = ConversationMemory(anima_dir, cfg)
-        mock_ac = _make_acompletion_mock()
-
-        with patch("litellm.acompletion", mock_ac):
-            await conv._call_llm("sys", "user msg")
-
-        kw = mock_ac.call_args
-        assert kw.kwargs["aws_access_key_id"] == "AKIAFALLBACK"
+        assert kw.kwargs["model"] == "anthropic/claude-sonnet-4-6"
+        assert "api_key" not in kw.kwargs
