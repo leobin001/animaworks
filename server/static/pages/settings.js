@@ -2,6 +2,9 @@
 import { t } from "/shared/i18n.js";
 import { applyTheme, applyDisplayMode, getDisplayMode } from "../modules/app.js";
 
+const _LS_ACTIVITY  = "aw-activity-level";
+const _LS_SCHEDULE  = "aw-activity-schedule";
+
 const THEMES = [
   { id: "default",   label: "Default",   colors: ["#374151", "#f5f5f5", "#fff"] },
   { id: "graphite",  label: "Graphite",  colors: ["#1f2937", "#f9fafb", "#fff"] },
@@ -172,30 +175,36 @@ function _updateThemeGrid(container, theme) {
 
 async function _initActivityLevel(container) {
   let schedule = [];
+  let level = 100;
+  let fromApi = false;
   try {
     const res = await fetch("/api/settings/activity-level");
     if (res.ok) {
       const data = await res.json();
-      const level = data.activity_level || 100;
+      level = data.activity_level || 100;
       schedule = data.activity_schedule || [];
-      const slider = container.querySelector("#activityLevelSlider");
-      const display = container.querySelector("#activityLevelValue");
-      if (slider) {
-        slider.value = level;
-        _updateActivityDisplay(display, level);
-        _updateActivityEffect(container, level);
-        _updatePresetButtons(container, level);
-      }
+      fromApi = true;
+      _cacheActivityState(level, schedule);
     } else {
       console.warn("[Settings] GET activity-level failed:", res.status);
-      _showSettingsStatus(container, t("settings.load_error"), true);
+      ({ level, schedule } = _loadCachedActivityState());
+      if (!schedule.length) _showSettingsStatus(container, t("settings.load_error"), true);
     }
   } catch (err) {
     console.warn("[Settings] GET activity-level error:", err);
-    _showSettingsStatus(container, t("settings.load_error"), true);
+    ({ level, schedule } = _loadCachedActivityState());
+    if (!schedule.length) _showSettingsStatus(container, t("settings.load_error"), true);
   }
 
   const slider = container.querySelector("#activityLevelSlider");
+  const display = container.querySelector("#activityLevelValue");
+  if (slider) {
+    slider.value = level;
+    _updateActivityDisplay(display, level);
+    _updateActivityEffect(container, level);
+    _updatePresetButtons(container, level);
+  }
+
   if (slider) {
     slider.addEventListener("input", (e) => {
       const val = parseInt(e.target.value, 10);
@@ -255,6 +264,7 @@ function _updatePresetButtons(container, level) {
 }
 
 async function _setActivityLevel(level, container) {
+  _cacheActivityState(level, null);
   try {
     const res = await fetch("/api/settings/activity-level", {
       method: "PUT",
@@ -355,6 +365,8 @@ async function _saveNightMode(container, revertOnFail) {
     { start: ns, end: ne, level: nightLevel },
   ];
 
+  _cacheActivityState(dayLevel, schedule);
+
   try {
     const res = await fetch("/api/settings/activity-schedule", {
       method: "PUT",
@@ -364,16 +376,27 @@ async function _saveNightMode(container, revertOnFail) {
     if (!res.ok) {
       console.warn("[Settings] PUT activity-schedule failed:", res.status);
       _showSettingsStatus(container, t("settings.save_error"), true);
-      if (revertOnFail) _revertNightModeToggle(container, false);
+      if (revertOnFail) {
+        _revertNightModeToggle(container, false);
+        _cacheActivityState(dayLevel, []);
+      }
     }
   } catch (err) {
     console.warn("[Settings] PUT activity-schedule error:", err);
     _showSettingsStatus(container, t("settings.save_error"), true);
-    if (revertOnFail) _revertNightModeToggle(container, false);
+    if (revertOnFail) {
+      _revertNightModeToggle(container, false);
+      _cacheActivityState(dayLevel, []);
+    }
   }
 }
 
 async function _clearNightMode(container) {
+  const mainSlider = container && container.querySelector("#activityLevelSlider");
+  const curLevel = mainSlider ? parseInt(mainSlider.value, 10) : 100;
+  const prevSchedule = _loadCachedActivityState().schedule;
+  _cacheActivityState(curLevel, []);
+
   try {
     const res = await fetch("/api/settings/activity-schedule", {
       method: "PUT",
@@ -382,15 +405,43 @@ async function _clearNightMode(container) {
     });
     if (!res.ok) {
       console.warn("[Settings] PUT clear schedule failed:", res.status);
-      if (container) _showSettingsStatus(container, t("settings.save_error"), true);
-      if (container) _revertNightModeToggle(container, true);
+      if (container) {
+        _showSettingsStatus(container, t("settings.save_error"), true);
+        _revertNightModeToggle(container, true);
+        _cacheActivityState(curLevel, prevSchedule);
+      }
     }
   } catch (err) {
     console.warn("[Settings] PUT clear schedule error:", err);
-    if (container) _showSettingsStatus(container, t("settings.save_error"), true);
-    if (container) _revertNightModeToggle(container, true);
+    if (container) {
+      _showSettingsStatus(container, t("settings.save_error"), true);
+      _revertNightModeToggle(container, true);
+      _cacheActivityState(curLevel, prevSchedule);
+    }
   }
 }
+
+// ── localStorage Cache ─────────────────────
+
+function _cacheActivityState(level, schedule) {
+  try {
+    if (level != null) localStorage.setItem(_LS_ACTIVITY, String(level));
+    if (schedule != null) localStorage.setItem(_LS_SCHEDULE, JSON.stringify(schedule));
+  } catch { /* quota / private mode */ }
+}
+
+function _loadCachedActivityState() {
+  try {
+    const level = parseInt(localStorage.getItem(_LS_ACTIVITY), 10) || 100;
+    const raw = localStorage.getItem(_LS_SCHEDULE);
+    const schedule = raw ? JSON.parse(raw) : [];
+    return { level, schedule: Array.isArray(schedule) ? schedule : [] };
+  } catch {
+    return { level: 100, schedule: [] };
+  }
+}
+
+// ── UI Helpers ──────────────────────────────
 
 function _revertNightModeToggle(container, checked) {
   const toggle = container.querySelector("#nightModeToggle");

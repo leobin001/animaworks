@@ -153,7 +153,7 @@ function showDemoSplashIfNeeded() {
     const existing = document.getElementById("authBanner");
     if (existing) existing.remove();
     if (btn.dataset.action === "activity") {
-      window.location.hash = "#activity";
+      window.location.hash = "#/activity";
     }
   });
 
