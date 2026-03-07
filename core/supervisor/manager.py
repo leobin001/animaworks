@@ -109,6 +109,7 @@ class ProcessSupervisor(HealthMixin, ReconcileMixin, SchedulerMixin):
         self._health_check_task: asyncio.Task | None = None
         self._reconciliation_task: asyncio.Task | None = None
         self._inbox_wake_task: asyncio.Task | None = None
+        self._zombie_reaper_task: asyncio.Task | None = None
         self._shutdown = False
         self.scheduler: AsyncIOScheduler | None = None
         self._scheduler_running: bool = False
@@ -182,6 +183,9 @@ class ProcessSupervisor(HealthMixin, ReconcileMixin, SchedulerMixin):
 
         # Start inbox wake dispatcher
         self._inbox_wake_task = asyncio.create_task(self._inbox_wake_dispatcher())
+
+        # Start zombie reaper (safety net for orphaned child processes)
+        self._zombie_reaper_task = asyncio.create_task(self._zombie_reaper_loop())
 
         # Start system scheduler (daily/weekly consolidation)
         self._start_system_scheduler()
@@ -490,6 +494,14 @@ class ProcessSupervisor(HealthMixin, ReconcileMixin, SchedulerMixin):
             except asyncio.CancelledError:
                 pass
 
+        # Stop zombie reaper
+        if self._zombie_reaper_task:
+            self._zombie_reaper_task.cancel()
+            try:
+                await self._zombie_reaper_task
+            except asyncio.CancelledError:
+                pass
+
         # Stop all processes
         tasks = [self.stop_anima(name) for name in list(self.processes.keys())]
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -543,6 +555,35 @@ class ProcessSupervisor(HealthMixin, ReconcileMixin, SchedulerMixin):
             if response.error:
                 raise IPCConnectionError(f"Stream error: {response.error.get('message', 'Unknown error')}")
             yield response
+
+    async def _zombie_reaper_loop(self) -> None:
+        """Periodically reap zombie child processes as a safety net.
+
+        Calls ``os.waitpid(-1, WNOHANG)`` in a loop to collect any child
+        processes that have exited but not yet been waited on.  This runs
+        every 60 seconds and acts purely as a fallback — normal code paths
+        should call ``wait()`` explicitly.
+        """
+        from core.i18n import t as _t
+
+        while not self._shutdown:
+            try:
+                await asyncio.sleep(60)
+                reaped = 0
+                while True:
+                    try:
+                        pid, _ = os.waitpid(-1, os.WNOHANG)
+                        if pid == 0:
+                            break
+                        reaped += 1
+                    except ChildProcessError:
+                        break
+                if reaped:
+                    logger.info(_t("supervisor.zombie_reaped", count=reaped))
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.debug("zombie reaper error", exc_info=True)
 
     async def _inbox_wake_dispatcher(self) -> None:
         """Watch ``run/inbox_wake/`` for wake files and trigger process_inbox.

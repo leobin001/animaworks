@@ -178,7 +178,7 @@ class ProcessHandle:
             self.state = ProcessState.RUNNING
             logger.info("Process running: %s", self.anima_name)
 
-        except Exception as e:
+        except BaseException as e:
             logger.error("Failed to start process %s: %s", self.anima_name, e)
 
             # Log stderr file location for debugging
@@ -494,25 +494,33 @@ class ProcessHandle:
 
     async def _cleanup(self) -> None:
         """Clean up resources (including killing orphaned subprocesses)."""
-        # Kill subprocess (and its entire session group) if still alive
-        if self.process and self.process.poll() is None:
-            logger.warning(
-                "Killing orphaned subprocess: %s (PID %s)",
-                self.anima_name,
-                self.process.pid,
-            )
-            try:
-                os.killpg(os.getpgid(self.process.pid), _signal.SIGTERM)
-            except OSError:
-                self.process.terminate()
-            try:
-                self.process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
+        if self.process:
+            if self.process.poll() is None:
+                # Still alive — kill and wait
+                logger.warning(
+                    "Killing orphaned subprocess: %s (PID %s)",
+                    self.anima_name,
+                    self.process.pid,
+                )
                 try:
-                    os.killpg(os.getpgid(self.process.pid), _signal.SIGKILL)
+                    os.killpg(os.getpgid(self.process.pid), _signal.SIGTERM)
                 except OSError:
-                    self.process.kill()
-                self.process.wait()
+                    self.process.terminate()
+                try:
+                    self.process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(os.getpgid(self.process.pid), _signal.SIGKILL)
+                    except OSError:
+                        self.process.kill()
+                    self.process.wait()
+            else:
+                # Already exited — explicitly reap to prevent zombie
+                try:
+                    self.process.wait(timeout=1)
+                except (subprocess.TimeoutExpired, ChildProcessError):
+                    pass
+            self.process = None
 
         if self.ipc_client:
             try:

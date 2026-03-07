@@ -388,6 +388,7 @@ class LifecycleMixin:
                 _session_token = self.agent._tool_handler.set_active_session_type("background")
                 self.agent._tool_handler.set_session_origin(ORIGIN_SYSTEM)
 
+                proc = None
                 try:
                     if command:
                         # Execute bash command
@@ -427,6 +428,15 @@ class LifecycleMixin:
                         safe=True,
                     )
                 finally:
+                    if proc is not None and proc.returncode is None:
+                        try:
+                            proc.kill()
+                        except ProcessLookupError:
+                            pass
+                        try:
+                            await proc.wait()
+                        except ProcessLookupError:
+                            pass
                     active_session_type.reset(_session_token)
                     self._cron_idle.set()
                     self._status_slots["background"] = "idle"
