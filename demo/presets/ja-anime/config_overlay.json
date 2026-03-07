@@ -9,5 +9,9 @@
   },
   "ui": {
     "demo_mode": true
+  },
+  "anima_defaults": {
+    "model": "claude-sonnet-4-6",
+    "background_model": "claude-haiku-4-5-20251001"
   }
 }

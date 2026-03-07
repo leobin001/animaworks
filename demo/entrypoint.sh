@@ -91,7 +91,23 @@ merge_templates(Path('$DATA_DIR'))
         "${create_args[@]}"
     done
 
-    # 4a. Copy preset-specific heartbeat/cron files (override blank templates)
+    # 4a. Override models for demo (cost optimization: sonnet/haiku instead of opus/sonnet)
+    python3 -c "
+import json, sys, glob
+data_dir = sys.argv[1]
+demo_model = 'claude-sonnet-4-6'
+demo_bg_model = 'claude-haiku-4-5-20251001'
+for status_path in glob.glob(f'{data_dir}/animas/*/status.json'):
+    with open(status_path) as f:
+        status = json.load(f)
+    status['model'] = demo_model
+    status['background_model'] = demo_bg_model
+    with open(status_path, 'w') as f:
+        json.dump(status, f, indent=2, ensure_ascii=False)
+" "$DATA_DIR"
+    echo "Demo model override applied (sonnet + haiku)."
+
+    # 4b. Copy preset-specific heartbeat/cron files (override blank templates)
     for hb_file in "${PRESET_DIR}/heartbeat/"*.md; do
         [ -f "$hb_file" ] || continue
         name="$(basename "$hb_file" .md)"
@@ -111,7 +127,7 @@ merge_templates(Path('$DATA_DIR'))
         fi
     done
 
-    # 4b. Create auth.json (local_trust mode, no password)
+    # 4c. Create auth.json (local_trust mode, no password)
     cat > "${DATA_DIR}/auth.json" <<AUTHEOF
 {
   "auth_mode": "local_trust",
