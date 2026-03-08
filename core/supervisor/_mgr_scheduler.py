@@ -145,8 +145,12 @@ class SchedulerMixin:
         indexing_enabled = True
         indexing_time = "04:00"
         if consolidation_cfg:
-            indexing_enabled = getattr(consolidation_cfg, "indexing_enabled", True)
-            indexing_time = getattr(consolidation_cfg, "indexing_time", None) or "04:00"
+            _ie = getattr(consolidation_cfg, "indexing_enabled", None)
+            if isinstance(_ie, bool):
+                indexing_enabled = _ie
+            _it = getattr(consolidation_cfg, "indexing_time", None)
+            if isinstance(_it, str) and ":" in _it:
+                indexing_time = _it
 
         if indexing_enabled:
             idx_hour, idx_minute = (int(x) for x in indexing_time.split(":"))
