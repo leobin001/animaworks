@@ -6,25 +6,32 @@ import { t } from "../i18n.js";
 // ── TextAnimator ──────────────────────────────────────
 // Buffers incoming text deltas and drips them at a constant rate
 // via requestAnimationFrame to smooth out bursty API token delivery.
+// Adapts display speed dynamically based on measured incoming chunk rate.
 
 const _DEFAULT_CHAR_INTERVAL_MS = 8;
+const _MIN_CHAR_INTERVAL_MS = 2;
+const _MAX_CHAR_INTERVAL_MS = 30;
 const _CATCHUP_THRESHOLD_FAST = 200;
 const _CATCHUP_THRESHOLD_MED = 100;
+const _RATE_WINDOW_SIZE = 6;
+const _RATE_DRAIN_FACTOR = 0.7;
 
 export class TextAnimator {
   /**
    * @param {object} opts
-   * @param {number}  [opts.charIntervalMs=8] - Base ms per character
+   * @param {number}  [opts.charIntervalMs=8] - Initial ms per character (auto-adjusted)
    * @param {function(string, string): void} opts.onUpdate - (displayText, fullBuffer) called on each animation step
    */
   constructor({ charIntervalMs = _DEFAULT_CHAR_INTERVAL_MS, onUpdate } = {}) {
     this._buffer = "";
     this._displayLen = 0;
     this._charInterval = charIntervalMs;
+    this._baseInterval = charIntervalMs;
     this._onUpdate = onUpdate;
     this._rafId = null;
     this._lastStepTime = 0;
     this._running = false;
+    this._pushHistory = [];
   }
 
   start() {
@@ -32,11 +39,22 @@ export class TextAnimator {
     this._displayLen = 0;
     this._running = true;
     this._lastStepTime = performance.now();
+    this._pushHistory = [];
+    this._charInterval = this._baseInterval;
     this._scheduleTick();
   }
 
   push(delta) {
-    if (delta) this._buffer += delta;
+    if (!delta) return;
+    this._buffer += delta;
+    const now = performance.now();
+    this._pushHistory.push({ t: now, len: delta.length });
+    if (this._pushHistory.length > _RATE_WINDOW_SIZE) {
+      this._pushHistory.shift();
+    }
+    if (this._pushHistory.length >= 3) {
+      this._adaptRate();
+    }
   }
 
   flush() {
@@ -53,6 +71,20 @@ export class TextAnimator {
 
   get displayText() { return this._buffer.slice(0, this._displayLen); }
   get isAnimating() { return this._displayLen < this._buffer.length; }
+
+  _adaptRate() {
+    const h = this._pushHistory;
+    if (h.length < 3) return;
+    const span = h[h.length - 1].t - h[0].t;
+    if (span <= 0) return;
+    let totalChars = 0;
+    for (let i = 1; i < h.length; i++) totalChars += h[i].len;
+    const incomingMsPerChar = span / totalChars;
+    this._charInterval = Math.max(
+      _MIN_CHAR_INTERVAL_MS,
+      Math.min(_MAX_CHAR_INTERVAL_MS, incomingMsPerChar * _RATE_DRAIN_FACTOR),
+    );
+  }
 
   _scheduleTick() {
     if (this._rafId != null) return;
@@ -588,8 +620,9 @@ function _patchSubordinateZone(container, msg, opts) {
 
 function _renderThinkingZoneContent(msg, opts) {
   const { escapeHtml } = opts;
-  if (msg.thinking && msg.thinkingText) {
-    return `<div class="thinking-inline-preview">${escapeHtml(msg.thinkingText)}</div>`;
+  const visibleThinking = msg._displayThinkingText || msg.thinkingText;
+  if (msg.thinking && visibleThinking) {
+    return `<div class="thinking-inline-preview">${escapeHtml(visibleThinking)}</div>`;
   }
   return "";
 }

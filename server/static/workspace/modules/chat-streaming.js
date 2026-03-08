@@ -224,6 +224,7 @@ async function _sendConversation(text, overrideImages = null) {
   document.addEventListener("anima-tool-activity", _onSubordinateActivity);
 
   let _textAnimator = null;
+  let _thinkingAnimator = null;
 
   const { success, error } = await mgr.sendChat(anima, thread, text, {
     images,

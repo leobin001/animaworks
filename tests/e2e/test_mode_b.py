@@ -192,7 +192,7 @@ class TestModeBSkillInjection:
         # Create a personal skill (directory structure)
         (agent.anima_dir / "skills" / "test_skill").mkdir(parents=True, exist_ok=True)
         (agent.anima_dir / "skills" / "test_skill" / "SKILL.md").write_text(
-            "# Test Skill\n## 概要\nA test skill for validation\n## 手順\n1. Do something",
+            "# Test Skill\n## 概要\n[test, validation, check]\nA test skill for validation\n## 手順\n1. Do something",
             encoding="utf-8",
         )
 
@@ -211,7 +211,7 @@ class TestModeBSkillInjection:
         agent._executor._call_llm = capture_call
 
         with patch_litellm(main_resp):
-            await agent.run_cycle("Hello")
+            await agent.run_cycle("I need to run a test validation check")
 
         assert len(captured_system) >= 1
         sys_prompt = captured_system[0]
