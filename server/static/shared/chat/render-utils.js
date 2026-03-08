@@ -10,11 +10,11 @@ import { t } from "../i18n.js";
 
 const _DEFAULT_CHAR_INTERVAL_MS = 14;
 const _MIN_CHAR_INTERVAL_MS = 4;
-const _MAX_CHAR_INTERVAL_MS = 45;
+const _MAX_CHAR_INTERVAL_MS = 100;
 const _CATCHUP_THRESHOLD_FAST = 300;
 const _CATCHUP_THRESHOLD_MED = 150;
 const _RATE_WINDOW_SIZE = 6;
-const _RATE_DRAIN_FACTOR = 2;
+const _RATE_DRAIN_FACTOR = 3;
 
 export class TextAnimator {
   /**
