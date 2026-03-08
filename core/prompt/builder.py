@@ -139,10 +139,39 @@ def resolve_prompt_tier(context_window: int) -> str:
 
 # ── Budget-based prompt scaling ───────────────────────────────
 _REFERENCE_WINDOW = 128_000
+_PROC_SUMMARY_BUDGET = 300  # tokens — procedure summary list
+_KNOW_SUMMARY_BUDGET = 200  # tokens — knowledge summary list
 _TOOL_RESERVATION_PCT = 0.15
 _OUTPUT_RESERVATION_PCT = 0.10
 _CONVERSATION_RESERVATION_PCT = 0.10
 _MIN_SYSTEM_BUDGET = 2000
+
+
+_SUMMARY_MAX_CHARS = 200
+
+
+def _extract_entry_summary(entry: dict) -> str:
+    """Extract a 1-line summary for a DK entry.
+
+    Priority: frontmatter ``description`` → first ATX heading →
+    first non-empty, non-heading line → file name with hyphens replaced.
+    Result is capped at :data:`_SUMMARY_MAX_CHARS`.
+    """
+    desc = (entry.get("description") or "").strip()
+    if desc:
+        return desc[:_SUMMARY_MAX_CHARS]
+    content = entry.get("content") or ""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip()
+            if heading:
+                return heading[:_SUMMARY_MAX_CHARS]
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and not stripped.startswith("---"):
+            return stripped[:_SUMMARY_MAX_CHARS]
+    return (entry.get("name") or "").replace("-", " ").replace("_", " ")
 
 
 @dataclass
@@ -825,48 +854,52 @@ def build_system_prompt(
     if memory_guide_content:
         _add(memory_guide_content, "memory_guide", 3)
 
-    # ── Distilled Knowledge Injection (skip for task) ─────
+    # ── Distilled Knowledge Summary Injection (skip for task) ─────
     injected_knowledge_files: list[str] = []
     injected_procedures: list[Path] = []
     overflow_files: list[str] = []
 
     if is_task:
-        knowledge_budget = 0
+        proc_budget = 0
+        know_budget = 0
     else:
-        knowledge_budget = max(int(4000 * scale), 0)
+        proc_budget = max(int(_PROC_SUMMARY_BUDGET * scale), 0)
+        know_budget = max(int(_KNOW_SUMMARY_BUDGET * scale), 0)
 
     procedures_list, knowledge_list = memory.collect_distilled_knowledge_separated()
 
-    used_tokens = 0
-
     proc_parts: list[str] = []
+    proc_used = 0
     for entry in procedures_list:
-        est_tokens = len(entry["content"]) // 3
-        if used_tokens + est_tokens <= knowledge_budget:
-            proc_parts.append(f"### {entry['name']}\n\n{entry['content']}")
-            used_tokens += est_tokens
+        summary = _extract_entry_summary(entry)
+        line = f"- **{entry['name']}**: {summary}"
+        est_tokens = len(line) // 3
+        if proc_used + est_tokens <= proc_budget:
+            proc_parts.append(line)
+            proc_used += est_tokens
             injected_procedures.append(Path(entry["path"]))
         else:
             overflow_files.append(entry["name"])
 
-    proc_content = f"{_ss.get('procedures_header', '## Procedures')}\n\n" + "\n\n---\n\n".join(proc_parts)
     if proc_parts:
+        proc_content = f"{_ss.get('procedures_header', '## Procedures')}\n\n" + "\n".join(proc_parts)
         _add(proc_content, "dk_procedures", 3, "elastic")
 
     know_parts: list[str] = []
+    know_used = 0
     for entry in knowledge_list:
-        est_tokens = len(entry["content"]) // 3
-        if used_tokens + est_tokens <= knowledge_budget:
-            know_parts.append(f"### {entry['name']}\n\n{entry['content']}")
-            used_tokens += est_tokens
+        summary = _extract_entry_summary(entry)
+        line = f"- **{entry['name']}**: {summary}"
+        est_tokens = len(line) // 3
+        if know_used + est_tokens <= know_budget:
+            know_parts.append(line)
+            know_used += est_tokens
             injected_knowledge_files.append(entry["name"])
         else:
             overflow_files.append(entry["name"])
 
-    know_content = f"{_ss.get('distilled_knowledge_header', '## Distilled Knowledge')}\n\n" + "\n\n---\n\n".join(
-        know_parts
-    )
     if know_parts:
+        know_content = f"{_ss.get('distilled_knowledge_header', '## Distilled Knowledge')}\n\n" + "\n".join(know_parts)
         _add(know_content, "dk_knowledge", 3, "elastic")
 
     if not is_task:
