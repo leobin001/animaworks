@@ -546,7 +546,7 @@ class GmailClient:
 
             return SendResult(
                 message_id=sent["id"],
-                thread_id=sent["threadId"],
+                thread_id=sent.get("threadId", ""),
                 success=True,
             )
 
