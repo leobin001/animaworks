@@ -193,7 +193,7 @@ class RAGMemorySearch:
         Skips re-indexing when the directory hash matches the stored value.
         """
         cs_dir = self._common_skills_dir
-        if not cs_dir.is_dir() or not any(cs_dir.glob("*/SKILL.md")):
+        if not cs_dir.is_dir() or not any(cs_dir.rglob("SKILL.md")):
             logger.debug("No common_skills files found, skipping shared skills indexing")
             return
 
