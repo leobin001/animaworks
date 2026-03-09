@@ -27,6 +27,21 @@ Refer to this when you need to know "what is this file for?" or "can I modify it
 └── assets/              # Images, 3D models
 ```
 
+### Encapsulation Boundaries
+
+Based on the Anima design principle "Encapsulated Individual," files are classified into three layers.
+This classification determines who may modify each file.
+
+| Layer | Files | Rationale |
+|-------|-------|-----------|
+| **Inside the capsule** (thoughts & memory) | `identity.md`, `episodes/`, `knowledge/`, `procedures/`, `skills/`, `state/`, `shortterm/` | Personality, experiences, and learning belong to the individual. Cannot be modified externally |
+| **Capsule boundary** (org–individual interface) | `injection.md`, `cron.md`, `heartbeat.md`, `permissions.md` | Roles and permissions the organization expects of the individual. Supervisor can modify |
+| **Outside the capsule** (management info) | `status.json`, `specialty_prompt.md` | Pure configuration and system management. Operated via CLI or admin |
+
+- Changing the **inside** means "becoming a different person" or "losing memories." This is not permitted
+- Changing the **boundary** means "changing jobs" or "shifting responsibilities." Legitimate organizational operation
+- Changing the **outside** has no direct impact on the individual's personality or behavior
+
 ---
 
 ## Your Personality (identity)
