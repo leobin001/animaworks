@@ -181,7 +181,9 @@ class ConversationMixin:
                     if "to" in raw:
                         raw["to_person"] = raw.pop("to")
                     try:
-                        entry = ActivityEntry(**{k: v for k, v in raw.items() if k in ActivityEntry.__dataclass_fields__})
+                        entry = ActivityEntry(
+                            **{k: v for k, v in raw.items() if k in ActivityEntry.__dataclass_fields__}
+                        )
                     except (TypeError, ValueError, KeyError):
                         logger.debug("Skipping malformed entry at line %d in %s", line_num, path)
                         continue
