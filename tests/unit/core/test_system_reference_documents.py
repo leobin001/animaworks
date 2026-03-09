@@ -893,6 +893,9 @@ _TEMPLATES_CK_DIR = (
 # All expected markdown files in templates/ja/common_knowledge
 _EXPECTED_FILES = [
     "00_index.md",
+    "anatomy/anima-anatomy.md",
+    "anatomy/memory-system.md",
+    "anatomy/what-is-anima.md",
     "communication/board-guide.md",
     "communication/call-human-guide.md",
     "communication/instruction-patterns.md",
