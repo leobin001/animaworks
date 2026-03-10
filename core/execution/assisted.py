@@ -324,7 +324,13 @@ class AssistedExecutor(BaseExecutor):
         import litellm
 
         from core.config.models import resolve_max_tokens
-        from core.execution.base import is_adaptive_model, is_anthropic_claude, is_bedrock_kimi, is_bedrock_qwen, resolve_thinking_effort
+        from core.execution.base import (
+            is_adaptive_model,
+            is_anthropic_claude,
+            is_bedrock_kimi,
+            is_bedrock_qwen,
+            resolve_thinking_effort,
+        )
 
         _eff_max = (
             max_tokens_override

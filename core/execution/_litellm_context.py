@@ -48,7 +48,13 @@ class ContextMixin:
     def _build_llm_kwargs(self) -> dict[str, Any]:
         """Credential + model kwargs for ``litellm.acompletion``."""
         from core.config.models import resolve_max_tokens
-        from core.execution.base import is_adaptive_model, is_anthropic_claude, is_bedrock_kimi, is_bedrock_qwen, resolve_thinking_effort
+        from core.execution.base import (
+            is_adaptive_model,
+            is_anthropic_claude,
+            is_bedrock_kimi,
+            is_bedrock_qwen,
+            resolve_thinking_effort,
+        )
 
         _eff_max = resolve_max_tokens(
             self._model_config.model,
