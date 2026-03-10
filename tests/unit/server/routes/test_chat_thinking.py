@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 from server.routes.chat import _handle_chunk, _chunk_to_event
 

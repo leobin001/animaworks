@@ -41,7 +41,7 @@ class TestBuildResult:
         result = BuildResult(system_prompt="日本語テスト")
         encoded = result.encode("utf-8")
         assert isinstance(encoded, bytes)
-        assert "日本語テスト".encode("utf-8") == encoded
+        assert "日本語テスト".encode() == encoded
 
     def test_injected_procedures_default_empty(self) -> None:
         result = BuildResult(system_prompt="test")

@@ -216,7 +216,7 @@ def main() -> int:
         print("  Ratio: N/A")
 
     if high_output_animas:
-        print("\n  Animas with high output tokens (>{} per session):".format(args.threshold))
+        print(f"\n  Animas with high output tokens (>{args.threshold} per session):")
         for name, total, sessions in sorted(high_output_animas, key=lambda x: -x[1]):
             pending_for = len(state_summaries.get(name, {}).get("pending_files", []))
             verdict = "justified" if pending_for > 0 else "LOW YIELD (no tasks created)"
