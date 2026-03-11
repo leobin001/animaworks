@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 # ── Constants ────────────────────────────────────────────────────────
@@ -36,6 +36,7 @@ _SEV_LABEL = {"HIGH": "HIGH", "MEDIUM": "MED ", "LOW": "LOW "}
 CATEGORIES = (
     "common_skills",
     "common_knowledge",
+    "reference",
     "docs",
     "root",
 )
@@ -70,100 +71,113 @@ _JA_ONLY: frozenset[str] = frozenset(
 # value = related source code paths (relative to workspace root)
 
 DOC_SOURCE_MAP: dict[str, list[str]] = {
-    # ── common_knowledge — communication ──
-    "common_knowledge/communication/messaging-guide.md": [
-        "core/messenger.py",
-        "core/outbound.py",
-    ],
+    # ── common_knowledge (remains) ──
     "common_knowledge/communication/board-guide.md": [
         "core/messenger.py",
         "server/routes/channels.py",
     ],
-    "common_knowledge/communication/instruction-patterns.md": [
-        "core/messenger.py",
+    "common_knowledge/communication/call-human-guide.md": [
+        "core/notification/",
         "core/tooling/handler_comms.py",
-    ],
-    "common_knowledge/communication/reporting-guide.md": [
-        "core/messenger.py",
-        "core/outbound.py",
     ],
     "common_knowledge/communication/sending-limits.md": [
         "core/outbound.py",
         "core/memory/activity.py",
     ],
-    # ── common_knowledge — operations ──
-    "common_knowledge/operations/task-management.md": [
-        "core/background.py",
-        "core/tooling/",
-        "core/memory/task_queue.py",
-    ],
-    "common_knowledge/operations/heartbeat-cron-guide.md": [
-        "core/background.py",
-        "core/schedule_parser.py",
-        "core/_anima_heartbeat.py",
-    ],
     "common_knowledge/operations/background-tasks.md": [
         "core/background.py",
         "core/supervisor/pending_executor.py",
     ],
-    "common_knowledge/operations/mode-s-auth-guide.md": [
-        "core/execution/agent_sdk.py",
-        "core/execution/_sdk_security.py",
+    "common_knowledge/operations/task-board-guide.md": [
+        "server/routes/tasks.py",
     ],
-    "common_knowledge/operations/project-setup.md": [
-        "core/init.py",
-        "cli/commands/init_cmd.py",
-    ],
-    "common_knowledge/operations/tool-usage-overview.md": [
-        "core/tooling/",
-        "core/tools/",
-    ],
-    "common_knowledge/operations/voice-chat-guide.md": [
-        "core/voice/",
-        "server/routes/voice.py",
-    ],
-    # ── common_knowledge — anatomy ──
     "common_knowledge/anatomy/what-is-anima.md": [
         "core/anima.py",
         "core/background.py",
         "core/lifecycle.py",
     ],
-    "common_knowledge/anatomy/anima-anatomy.md": [
+    "common_knowledge/organization/hierarchy-rules.md": [
+        "core/tooling/handler_org.py",
+        "core/tooling/schemas.py",
+    ],
+    "common_knowledge/security/prompt-injection-awareness.md": [
+        "core/prompt/builder.py",
+        "core/execution/_sanitize.py",
+    ],
+    # ── reference (moved from common_knowledge) ──
+    "reference/communication/messaging-guide.md": [
+        "core/messenger.py",
+        "core/outbound.py",
+    ],
+    "reference/communication/instruction-patterns.md": [
+        "core/messenger.py",
+        "core/tooling/handler_comms.py",
+    ],
+    "reference/communication/reporting-guide.md": [
+        "core/messenger.py",
+        "core/outbound.py",
+    ],
+    "reference/communication/slack-bot-token-guide.md": [
+        "core/tools/slack.py",
+    ],
+    "reference/operations/task-management.md": [
+        "core/background.py",
+        "core/tooling/",
+        "core/memory/task_queue.py",
+    ],
+    "reference/operations/heartbeat-cron-guide.md": [
+        "core/background.py",
+        "core/schedule_parser.py",
+        "core/_anima_heartbeat.py",
+    ],
+    "reference/operations/mode-s-auth-guide.md": [
+        "core/execution/agent_sdk.py",
+        "core/execution/_sdk_security.py",
+    ],
+    "reference/operations/project-setup.md": [
+        "core/init.py",
+        "cli/commands/init_cmd.py",
+    ],
+    "reference/operations/tool-usage-overview.md": [
+        "core/tooling/",
+        "core/tools/",
+    ],
+    "reference/operations/voice-chat-guide.md": [
+        "core/voice/",
+        "server/routes/voice.py",
+    ],
+    "reference/operations/model-guide.md": [
+        "core/execution/",
+        "core/config/models.py",
+    ],
+    "reference/anatomy/anima-anatomy.md": [
         "core/anima_factory.py",
         "core/init.py",
         "core/prompt/builder.py",
         "core/schedule_parser.py",
     ],
-    "common_knowledge/anatomy/memory-system.md": [
+    "reference/anatomy/memory-system.md": [
         "core/memory/",
         "core/memory/priming.py",
         "core/memory/consolidation.py",
         "core/memory/forgetting.py",
         "core/memory/rag/",
     ],
-    # ── common_knowledge — organization ──
-    "common_knowledge/organization/hierarchy-rules.md": [
-        "core/tooling/handler_org.py",
-        "core/tooling/schemas.py",
-    ],
-    "common_knowledge/organization/roles.md": [
+    "reference/organization/roles.md": [
         "templates/_shared/",
         "core/anima_factory.py",
     ],
-    "common_knowledge/organization/structure.md": [
+    "reference/organization/structure.md": [
         "core/org_sync.py",
         "core/anima_factory.py",
     ],
-    # ── common_knowledge — security ──
-    "common_knowledge/security/prompt-injection-awareness.md": [
-        "core/prompt/builder.py",
-        "core/execution/_sanitize.py",
-    ],
-    # ── common_knowledge — troubleshooting ──
-    "common_knowledge/troubleshooting/common-issues.md": ["core/"],
-    "common_knowledge/troubleshooting/escalation-flowchart.md": [
+    "reference/troubleshooting/common-issues.md": ["core/"],
+    "reference/troubleshooting/escalation-flowchart.md": [
         "core/notification/",
         "core/tooling/handler_comms.py",
+    ],
+    "reference/troubleshooting/gmail-credential-setup.md": [
+        "core/tools/gmail.py",
     ],
     # ── common_skills ──
     "common_skills/animaworks-guide/SKILL.md": [

@@ -825,32 +825,14 @@ _TEMPLATES_CK_DIR = Path(__file__).resolve().parent.parent.parent.parent / "temp
 # All expected markdown files in templates/ja/common_knowledge
 _EXPECTED_FILES = [
     "00_index.md",
-    "anatomy/memory-system.md",
     "anatomy/what-is-anima.md",
     "communication/board-guide.md",
     "communication/call-human-guide.md",
-    "communication/instruction-patterns.md",
-    "communication/messaging-guide.md",
-    "communication/reporting-guide.md",
     "communication/sending-limits.md",
     "operations/background-tasks.md",
-    "operations/heartbeat-cron-guide.md",
     "operations/task-board-guide.md",
-    "operations/task-management.md",
-    "operations/tool-usage-overview.md",
     "organization/hierarchy-rules.md",
-    "organization/roles.md",
     "security/prompt-injection-awareness.md",
-    "troubleshooting/common-issues.md",
-    "troubleshooting/escalation-flowchart.md",
-    "usecases/usecase-communication.md",
-    "usecases/usecase-customer-support.md",
-    "usecases/usecase-development.md",
-    "usecases/usecase-knowledge.md",
-    "usecases/usecase-monitoring.md",
-    "usecases/usecase-overview.md",
-    "usecases/usecase-research.md",
-    "usecases/usecase-secretary.md",
 ]
 
 _TEMPLATES_REF_DIR = Path(__file__).resolve().parent.parent.parent.parent / "templates" / "ja" / "reference"
@@ -859,14 +841,32 @@ _TEMPLATES_REF_DIR = Path(__file__).resolve().parent.parent.parent.parent / "tem
 _EXPECTED_REFERENCE_FILES = [
     "00_index.md",
     "anatomy/anima-anatomy.md",
+    "anatomy/memory-system.md",
+    "communication/instruction-patterns.md",
+    "communication/messaging-guide.md",
+    "communication/reporting-guide.md",
     "communication/slack-bot-token-guide.md",
     "internals/common-knowledge-access-paths.md",
+    "operations/heartbeat-cron-guide.md",
     "operations/model-guide.md",
     "operations/mode-s-auth-guide.md",
     "operations/project-setup.md",
+    "operations/task-management.md",
+    "operations/tool-usage-overview.md",
     "operations/voice-chat-guide.md",
+    "organization/roles.md",
     "organization/structure.md",
+    "troubleshooting/common-issues.md",
+    "troubleshooting/escalation-flowchart.md",
     "troubleshooting/gmail-credential-setup.md",
+    "usecases/usecase-communication.md",
+    "usecases/usecase-customer-support.md",
+    "usecases/usecase-development.md",
+    "usecases/usecase-knowledge.md",
+    "usecases/usecase-monitoring.md",
+    "usecases/usecase-overview.md",
+    "usecases/usecase-research.md",
+    "usecases/usecase-secretary.md",
 ]
 
 
@@ -890,12 +890,11 @@ class TestTemplateFilesExist:
     def test_directory_structure(self):
         """Expected subdirectories should exist."""
         for subdir in (
+            "anatomy",
             "organization",
             "communication",
             "operations",
-            "troubleshooting",
             "security",
-            "usecases",
         ):
             assert (_TEMPLATES_CK_DIR / subdir).is_dir(), f"Missing subdir: {subdir}"
 
@@ -984,28 +983,36 @@ class TestIndexFileReferences:
     """00_index.md should reference all expected subdirectory files."""
 
     _EXPECTED_REFERENCED_FILES = [
-        "organization/roles.md",
         "organization/hierarchy-rules.md",
-        "communication/messaging-guide.md",
-        "communication/instruction-patterns.md",
-        "communication/reporting-guide.md",
         "communication/board-guide.md",
+        "communication/call-human-guide.md",
         "communication/sending-limits.md",
-        "operations/task-management.md",
-        "operations/heartbeat-cron-guide.md",
-        "operations/tool-usage-overview.md",
         "operations/background-tasks.md",
-        "troubleshooting/common-issues.md",
-        "troubleshooting/escalation-flowchart.md",
+        "operations/task-board-guide.md",
+        "anatomy/what-is-anima.md",
         "security/prompt-injection-awareness.md",
     ]
 
     _EXPECTED_REFERENCE_LINKS = [
         "reference/organization/structure.md",
-        "reference/operations/project-setup.md",
-        "reference/operations/voice-chat-guide.md",
+        "reference/organization/roles.md",
+        "reference/communication/messaging-guide.md",
+        "reference/communication/instruction-patterns.md",
+        "reference/communication/reporting-guide.md",
         "reference/communication/slack-bot-token-guide.md",
+        "reference/operations/project-setup.md",
+        "reference/operations/task-management.md",
+        "reference/operations/heartbeat-cron-guide.md",
+        "reference/operations/tool-usage-overview.md",
+        "reference/operations/model-guide.md",
+        "reference/operations/mode-s-auth-guide.md",
+        "reference/operations/voice-chat-guide.md",
+        "reference/anatomy/memory-system.md",
+        "reference/anatomy/anima-anatomy.md",
+        "reference/troubleshooting/common-issues.md",
+        "reference/troubleshooting/escalation-flowchart.md",
         "reference/troubleshooting/gmail-credential-setup.md",
+        "reference/usecases/usecase-overview.md",
     ]
 
     @pytest.mark.parametrize("rel_path", _EXPECTED_REFERENCED_FILES)
