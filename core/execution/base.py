@@ -82,6 +82,26 @@ def is_bedrock_kimi(model: str) -> bool:
     return model.startswith("bedrock/") and ("kimi" in model.lower() or "moonshot" in model.lower())
 
 
+def supports_streaming_tool_use(model: str) -> bool:
+    """Return True if *model* supports tool use in streaming mode.
+
+    Some Bedrock models (Llama 4, etc.) support tool use only via non-streaming
+    Converse API.  When streaming is requested with tools, Bedrock returns:
+    ``"This model doesn't support tool use in streaming mode."``
+
+    For these models, callers should fall back to ``stream=False`` when tools
+    are present in the request.
+    """
+    if not model.startswith("bedrock/"):
+        return True
+    bare = _bare_model_name(model).lower()
+    # Models known NOT to support streaming tool use on Bedrock:
+    _no_streaming_tool_use = (
+        "llama4",  # Meta Llama 4 Scout / Maverick
+    )
+    return not any(tag in bare for tag in _no_streaming_tool_use)
+
+
 def resolve_thinking_effort(model: str, effort: str | None) -> str:
     """Resolve thinking effort, clamping ``"max"`` to ``"high"`` for non-Opus-4.6."""
     resolved = effort or "high"

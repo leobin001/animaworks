@@ -31,6 +31,7 @@ from core.execution.base import (
     TokenUsage,
     ToolCallRecord,
     strip_thinking_tags,
+    supports_streaming_tool_use,
 )
 from core.execution.reminder import (
     SystemReminderQueue,
@@ -42,6 +43,12 @@ from core.prompt.context import ContextTracker
 from core.schemas import ImageData
 
 logger = logging.getLogger("animaworks.execution.litellm_loop")
+
+
+async def _empty_aiter() -> AsyncGenerator[Any, None]:
+    """Yield nothing — used to skip streaming chunk loop for non-streaming responses."""
+    return
+    yield  # pragma: no cover – makes this an async generator
 
 
 class StreamingMixin:
@@ -159,13 +166,24 @@ class StreamingMixin:
                     return
 
                 # Stream the LLM response
+                _has_tools = not is_final_iteration and bool(tools)
+                _use_stream = True
+                if _has_tools and not supports_streaming_tool_use(self._model_config.model):
+                    _use_stream = False
+                    logger.info(
+                        "A stream: model %s does not support streaming tool use, "
+                        "falling back to non-streaming for this iteration",
+                        self._model_config.model,
+                    )
+
                 call_kwargs: dict[str, Any] = {
                     "messages": messages,
-                    "stream": True,
-                    "stream_options": {"include_usage": True},
+                    "stream": _use_stream,
                     **iter_kwargs,
                 }
-                if not is_final_iteration:
+                if _use_stream:
+                    call_kwargs["stream_options"] = {"include_usage": True}
+                if _has_tools:
                     call_kwargs["tools"] = tools
 
                 response = cast(Any, await litellm.acompletion(**call_kwargs))
@@ -180,7 +198,40 @@ class StreamingMixin:
                 _reasoning_parts: list[str] = []
                 _think_filter = StreamingThinkFilter()
 
-                async for chunk in response:
+                # ── Non-streaming fallback: convert response to streaming events ──
+                if not _use_stream:
+                    msg_obj = response.choices[0].message
+                    if msg_obj.content:
+                        thinking_text, response_text = strip_thinking_tags(msg_obj.content)
+                        if thinking_text:
+                            yield {"type": "thinking_start"}
+                            yield {"type": "thinking_delta", "text": thinking_text}
+                            yield {"type": "thinking_end"}
+                            _reasoning_seen = True
+                            _reasoning_parts.append(thinking_text)
+                        if response_text:
+                            iter_text_parts.append(response_text)
+                            yield {"type": "text_delta", "text": response_text}
+                    if msg_obj.tool_calls:
+                        for idx, tc in enumerate(msg_obj.tool_calls):
+                            tc_id = tc.id or f"call_{idx}"
+                            tc_name = tc.function.name
+                            tc_args = tc.function.arguments or "{}"
+                            tool_calls_acc[idx] = {
+                                "id": tc_id,
+                                "name": tc_name,
+                                "arguments": tc_args,
+                            }
+                            yield {"type": "tool_start", "tool_name": tc_name, "tool_id": tc_id}
+                    finish_reason = response.choices[0].finish_reason
+                    if hasattr(response, "usage") and response.usage:
+                        usage_data = {
+                            "input_tokens": response.usage.prompt_tokens or 0,
+                            "output_tokens": response.usage.completion_tokens or 0,
+                        }
+                    _chunk_count = 1
+
+                async for chunk in response if _use_stream else _empty_aiter():
                     _chunk_count += 1
                     # DEBUG: raw chunk inspection (first 5 chunks)
                     if _chunk_count <= 5:
