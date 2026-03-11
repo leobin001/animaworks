@@ -32,6 +32,10 @@ RECENCY_HALF_LIFE_DAYS = 30.0
 
 WEIGHT_FREQUENCY = 0.1
 
+# Importance boost for [IMPORTANT]-tagged chunks (amygdala model:
+# lowers activation threshold for emotionally significant memories)
+WEIGHT_IMPORTANCE = 0.20
+
 
 # ── Data structures ─────────────────────────────────────────────────
 
@@ -263,15 +267,16 @@ class MemoryRetriever:
         self,
         results: list[RetrievalResult],
     ) -> list[RetrievalResult]:
-        """Apply temporal decay and frequency boost to scores.
+        """Apply temporal decay, frequency boost, and importance boost.
 
         - Temporal decay: exponential decay based on document age
         - Frequency boost: log-scaled boost based on access count (Hebbian LTP)
+        - Importance boost: flat boost for [IMPORTANT]-tagged chunks (amygdala model)
         """
         now = now_local()
 
         for result in results:
-            # --- Temporal decay (existing) ---
+            # --- Temporal decay ---
             updated_at_str = result.metadata.get("updated_at")
             if not updated_at_str:
                 decay_factor = 0.5
@@ -287,11 +292,16 @@ class MemoryRetriever:
             result.score = result.score + recency_score
             result.source_scores["recency"] = recency_score
 
-            # --- Frequency boost (new: Hebbian LTP analog) ---
+            # --- Frequency boost (Hebbian LTP analog) ---
             access_count = int(str(result.metadata.get("access_count", 0)))
             frequency_boost = WEIGHT_FREQUENCY * math.log1p(access_count)
             result.score += frequency_boost
             result.source_scores["frequency"] = frequency_boost
+
+            # --- Importance boost (amygdala model) ---
+            if result.metadata.get("importance") == "important":
+                result.score += WEIGHT_IMPORTANCE
+                result.source_scores["importance"] = WEIGHT_IMPORTANCE
 
         return results
 
